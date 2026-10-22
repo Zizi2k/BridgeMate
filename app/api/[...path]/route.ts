@@ -1,4 +1,4 @@
-import {generateAI,validateAIInput,AIError} from '../../../lib/ai';
+import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
 import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
@@ -54,9 +54,10 @@ async function handle(req:Request){
  async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member,'FORBIDDEN',403);return team}
  async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
  if(path[0]==='ai'){
-  const configured=!!process.env.OPENAI_API_KEY&&process.env.AI_ENABLED!=='false';
+  const aiConfig=getAIConfig(process.env);
+  const configured=!!aiConfig.apiKey&&process.env.AI_ENABLED!=='false';
   const dailyLimit=Math.min(200,Math.max(1,Number(process.env.AI_DAILY_LIMIT)||30));
-  if(path[1]==='status'&&method==='GET')return ok({configured,dailyLimit});
+  if(path[1]==='status'&&method==='GET')return ok({configured,dailyLimit,provider:aiConfig.provider});
   if(path[1]==='assist'&&method==='POST'){
    if(!configured)throw new AIError('AI_NOT_CONFIGURED',503);
    const input=validateAIInput(body);
@@ -70,7 +71,7 @@ async function handle(req:Request){
      if(counter.requests>w.limit)throw new AIError('AI_RATE_LIMIT',429);
     }
    });
-   return ok(await generateAI(input,{apiKey:process.env.OPENAI_API_KEY!,model:process.env.OPENAI_MODEL||'gpt-4.1-mini'}));
+   return ok(await generateAI(input,aiConfig));
   }
  }
  if(path[0]==='teams'){

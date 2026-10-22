@@ -60,7 +60,7 @@ Không dùng tài khoản root cho ứng dụng thật. Sau khi tạo schema, t�
 - Nhiệm vụ, người phụ trách, hạn và tiến độ.
 - Xác nhận hiểu theo phiên bản nhiệm vụ, phản hồi và bình luận.
 - 30 mẫu câu Việt–Anh, quiz 10 câu chấm ở backend.
-- Trợ lý AI: dịch, đơn giản hóa, viết lịch sự, tóm tắt, tạo checklist và hỏi về nội dung; cần cấu hình OpenAI API. Xem docs/AI_SETUP_VI.md.
+- Trợ lý AI: dịch, đơn giản hóa, viết lịch sự, tóm tắt, tạo checklist và hỏi về nội dung; mặc định Gemini (có Free tier với hạn mức); cần cấu hình GEMINI_API_KEY. Xem docs/AI_SETUP_VI.md.
 - Giao diện EN/VI, responsive Soft Academic.
 
 ## 5. File quan trọng

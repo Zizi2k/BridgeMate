@@ -19,11 +19,36 @@ export function extractAIText(data:any){
  if(!result)throw new AIError('AI_EMPTY_RESPONSE',502);
  return result;
 }
-export async function generateAI(input:AIInput,options:{apiKey:string;model:string;fetcher?:typeof fetch}){
+export type AIProvider='gemini'|'openai';
+export function getAIConfig(env:Record<string,string|undefined>):{provider:AIProvider;apiKey:string;model:string}{
+ const provider=env.AI_PROVIDER||'gemini';
+ if(provider!=='gemini'&&provider!=='openai')throw new AIError('AI_PROVIDER_INVALID',503);
+ return {provider,apiKey:(provider==='gemini'?env.GEMINI_API_KEY:env.OPENAI_API_KEY)||'',model:(provider==='gemini'?env.GEMINI_MODEL:env.OPENAI_MODEL)||(provider==='gemini'?'gemini-2.5-flash-lite':'gpt-4.1-mini')};
+}
+export function buildGeminiRequest(input:AIInput){
+ const prompt=buildAIRequest(input,'');
+ return {systemInstruction:{parts:[{text:prompt.instructions}]},contents:[{role:'user',parts:[{text:prompt.input}]}],generationConfig:{maxOutputTokens:1400,temperature:0.2}};
+}
+export function extractGeminiText(data:any){
+ if(data?.promptFeedback?.blockReason)throw new AIError('AI_BLOCKED',422);
+ const candidate=data?.candidates?.[0];
+ if(candidate?.finishReason==='MAX_TOKENS')throw new AIError('AI_INCOMPLETE',502);
+ if(candidate?.finishReason&&candidate.finishReason!=='STOP')throw new AIError('AI_BLOCKED',422);
+ const result=(candidate?.content?.parts||[]).filter((part:any)=>!part.thought&&typeof part.text==='string').map((part:any)=>part.text).join('\n').trim();
+ if(!result)throw new AIError('AI_EMPTY_RESPONSE',502);
+ return result;
+}
+export async function generateAI(input:AIInput,options:{provider?:AIProvider;apiKey:string;model:string;fetcher?:typeof fetch}){
  if(!options.apiKey)throw new AIError('AI_NOT_CONFIGURED',503);
+ const provider=options.provider||'gemini';
+ if(provider!=='gemini'&&provider!=='openai')throw new AIError('AI_PROVIDER_INVALID',503);
+ if(!/^[a-zA-Z0-9._-]+$/.test(options.model))throw new AIError('AI_MODEL_ERROR',502);
+ const gemini=provider==='gemini';
+ const url=gemini?'https://generativelanguage.googleapis.com/v1beta/models/'+options.model+':generateContent':'https://api.openai.com/v1/responses';
+ const headers:Record<string,string>={'Content-Type':'application/json',...(gemini?{'x-goog-api-key':options.apiKey}:{Authorization:'Bearer '+options.apiKey})};
  let response:Response;
- try{response=await (options.fetcher||fetch)('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+options.apiKey,'Content-Type':'application/json'},body:JSON.stringify(buildAIRequest(input,options.model)),signal:AbortSignal.timeout(25000)})}catch{throw new AIError('AI_CONNECTION_ERROR',504)}
+ try{response=await (options.fetcher||fetch)(url,{method:'POST',headers,body:JSON.stringify(gemini?buildGeminiRequest(input):buildAIRequest(input,options.model)),signal:AbortSignal.timeout(25000)})}catch{throw new AIError('AI_CONNECTION_ERROR',504)}
  if(!response.ok){if(response.status===429)throw new AIError('AI_PROVIDER_LIMIT',429);if(response.status===401||response.status===403)throw new AIError('AI_KEY_INVALID',502);if(response.status===400||response.status===404)throw new AIError('AI_MODEL_ERROR',502);throw new AIError('AI_UNAVAILABLE',502)}
  let data;try{data=await response.json()}catch{throw new AIError('AI_EMPTY_RESPONSE',502)}
- return {text:extractAIText(data),model:options.model};
+ return {text:gemini?extractGeminiText(data):extractAIText(data),model:options.model,provider};
 }
