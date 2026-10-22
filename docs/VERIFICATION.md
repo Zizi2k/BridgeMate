@@ -1,11 +1,7 @@
-# Vercel edition verification
+# MySQL edition verification
 
-- Next.js production build completed successfully.
-- TypeScript check passed.
-- Five policy/content tests passed.
-- Real Next.js production server integration passed against a temporary libSQL file database.
-- Verified registration, login/logout, team create/join, duplicate join, outsider access denial, task permissions, understanding review and version invalidation, comments, phrasebook, quiz scoring and saved attempts.
-- Verified migration reruns skip already applied files.
-- Verified client-supplied platform identity headers are ignored.
+Passed: TypeScript typecheck, eight unit tests (policy, bilingual content and MySQL configuration), Next.js production build, and JavaScript syntax checks for both database scripts.
 
-Not yet verified: Vercel deployment and a user-owned remote Turso database. No production Sites data has been copied.
+The MySQL edition includes eight tables, mysql2 pooling, Vercel pool lifecycle integration, verified TLS configuration, transactions for group/demo creation, a schema SQL file, migration scripts and API integration tests.
+
+No MySQL server or remote database credentials were available in this session. The full MySQL integration suite and the remote Vercel deployment have not been verified. Earlier SQLite/libSQL integration results do not establish MySQL runtime correctness. No existing production data has been migrated.

@@ -1,77 +1,84 @@
-# BridgeMate — GitHub and Vercel edition
+# BridgeMate — Next.js and MySQL
 
-Website cộng tác Việt–Anh dành cho nhóm sinh viên Việt Nam và WCC. Đây là bản Next.js độc lập, tách từ bản Sites; không dùng danh tính hoặc cookie ChatGPT.
+Website cộng tác Việt–Anh cho sinh viên Việt Nam và WCC. Bản hiện tại dùng **Next.js + MySQL + Drizzle**, triển khai ứng dụng lên Vercel. MySQL chạy trên một máy chủ database riêng, không nằm trong repository GitHub.
 
-## Công nghệ
+## 1. Chuẩn bị
 
-React + Next.js App Router + Drizzle + Turso/libSQL. Database local dùng SQLite để phát triển; Vercel phải dùng database từ xa để dữ liệu bền vững. API chạy Node.js Runtime. Phiên đăng nhập lưu trên máy chủ; trình duyệt dùng cookie HttpOnly, Secure khi HTTPS và SameSite=Lax.
-
-## Cài trên Windows hoặc máy cá nhân
-
-Cần Node.js >=22.13, Git, npm.
+- Node.js >=22.13, npm và Git.
+- MySQL 8.x local để phát triển, hoặc MySQL từ xa để triển khai.
+- Một tài khoản database có quyền tạo bảng và khóa ngoại. Lệnh tạo database còn cần quyền CREATE DATABASE; nếu nhà cung cấp đã tạo sẵn database thì bỏ qua lệnh này.
 
 ```bash
+git clone https://github.com/Zizi2k/BridgeMate.git
+cd BridgeMate
 npm ci
 ```
 
-Copy `.env.example` thành `.env.local`. Để chạy local, đặt:
+## 2. Tạo database MySQL
+
+Copy `.env.example` thành `.env.local`, điền thông tin MySQL của bạn. Ví dụ local:
 
 ```env
-TURSO_DATABASE_URL=file:./bridgemate.db
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=your_mysql_user
+MYSQL_PASSWORD=your_mysql_password
+MYSQL_DATABASE=bridgemate
+MYSQL_SSL=false
 ```
 
-Không cần token với database file local. Chạy:
+Chạy:
 
 ```bash
+npm run db:create
 npm run db:migrate
 npm run dev
 ```
 
-Mở http://localhost:3000. Chọn Explore the workspace hoặc đăng ký tài khoản.
+Lệnh đầu tạo database `bridgemate` nếu chưa tồn tại; lệnh sau tạo 8 bảng. Nếu database được nhà cung cấp tạo sẵn, chỉ chạy `npm run db:migrate`. Mở http://localhost:3000.
 
-## Đẩy lên GitHub
+Có thể thay lệnh tạo database/bảng bằng cách mở `mysql/schema.sql` trong MySQL Workbench và thực thi trên database mới. Chọn một cách khởi tạo: script hoặc Workbench. Nếu đã import thủ công thì không chạy migration ban đầu lên cùng database; cần baseline lịch sử trước.
 
-Tạo một repository trống, không thêm README hoặc .gitignore trên GitHub. Trong thư mục này:
+Không dùng tài khoản root cho ứng dụng thật. Sau khi tạo schema, tài khoản ứng dụng chỉ cần SELECT, INSERT, UPDATE, DELETE trên database; dùng tài khoản có quyền DDL riêng khi chạy migration.
 
-```bash
-git init
-git add .
-git commit -m "feat: BridgeMate Next.js app for Vercel"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
-git push -u origin main
-```
+## 3. Đưa lên Vercel
 
-Thay YOUR_USERNAME/YOUR_REPOSITORY bằng repo thật. Không đẩy `.env.local`, file database hoặc node_modules. Không dán token truy cập vào chat.
+1. Chuẩn bị MySQL online có địa chỉ host và cổng mà Vercel kết nối được. `localhost` hoặc `127.0.0.1` trên máy cá nhân không phải MySQL online cho Vercel.
+2. Điền thông tin database online vào `.env.local`, đặt `MYSQL_SSL=true` nếu endpoint dùng TLS. Nếu nhà cung cấp yêu cầu CA, thêm `MYSQL_SSL_CA` bằng chứng chỉ CA họ cung cấp. Không tắt kiểm tra chứng chỉ để xử lý lỗi TLS.
+3. Chạy `npm run db:migrate` với tài khoản có quyền tạo bảng trên database online mới.
+4. Trong Vercel, import repo **Zizi2k/BridgeMate**. Framework: Next.js. Root Directory: `./`. Install: `npm ci`. Build: `npm run build`. Giữ Output Directory mặc định.
+5. Thêm các Environment Variables: `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE`, `MYSQL_SSL`; thêm `MYSQL_SSL_CA` khi nhà cung cấp yêu cầu. Không đặt tiền tố NEXT_PUBLIC cho thông tin database.
+6. Deploy. Mở `/api/health`: khi kết nối thành công sẽ trả `{data:{status:"ok",database:"mysql"}}`.
+7. Thử đăng ký, đăng nhập, tạo nhóm, giao nhiệm vụ, xác nhận hiểu, cẩm nang và quiz. Khi đổi biến môi trường cần redeploy.
 
-## Đưa lên Vercel
+Ứng dụng dùng pool ở phạm vi module, giới hạn 3 kết nối mỗi instance và tích hợp quản lý pool Vercel. Tổng kết nối vẫn phụ thuộc số instance và giới hạn máy chủ MySQL. Không chạy migration trong mỗi HTTP request hoặc trong quá trình build.
 
-1. Tạo một database Turso do bạn sở hữu, lấy URL và token trong trang quản lý của dịch vụ. Kiểm tra gói sử dụng trước khi xác nhận dịch vụ có phí.
-2. Thay cấu hình trong `.env.local` bằng URL và token thật của database từ xa, rồi chạy `npm run db:migrate`. Script có theo dõi migration và có thể chạy lại an toàn.
-3. Trong Vercel, import repository GitHub. Framework là Next.js; root directory là thư mục chứa package.json.
-4. Trong Environment Variables, thêm `TURSO_DATABASE_URL` và `TURSO_AUTH_TOKEN`. Chọn đúng Production/Preview cần dùng. Không dùng tiền tố NEXT_PUBLIC cho hai biến này.
-5. Build Command: `npm run build`. Install Command: `npm ci`. Không đặt Output Directory thành dist.
-6. Deploy, mở website và thử đăng ký → tạo nhóm → giao nhiệm vụ → xác nhận hiểu. Khi sửa biến môi trường, redeploy.
-7. Các commit tiếp theo trên nhánh production được triển khai theo cấu hình Git của dự án Vercel.
+## 4. Chức năng
 
-Không chạy migration trong mỗi HTTP request. Chạy `npm run db:migrate` trước bản triển khai cần schema mới. Không dùng file SQLite local trên Vercel.
+- Đăng ký/đăng nhập, cookie HttpOnly, Secure trên HTTPS.
+- Nhóm và mã mời; kiểm tra quyền ở backend.
+- Nhiệm vụ, người phụ trách, hạn và tiến độ.
+- Xác nhận hiểu theo phiên bản nhiệm vụ, phản hồi và bình luận.
+- 30 mẫu câu Việt–Anh, quiz 10 câu chấm ở backend.
+- Giao diện EN/VI, responsive Soft Academic.
 
-## Dữ liệu từ bản Sites
+## 5. File quan trọng
 
-Đây là database mới. Mã nguồn và schema đã chuyển; tài khoản, nhóm và nhiệm vụ đang có trên Sites chưa được sao chép. Không xóa hoặc thay website Sites cũ. Việc chuyển dữ liệu thật cần bước xuất/nhập riêng và không nên sao chép phiên đăng nhập đang hoạt động.
+| File | Nội dung |
+|---|---|
+| app/page.tsx | Giao diện React |
+| app/globals.css | Kiểu trình bày |
+| app/api/[...path]/route.ts | API và phân quyền |
+| db/schema.ts | Schema MySQL 8 bảng |
+| db/index.ts | MySQL pool và Drizzle |
+| lib/mysql-config.ts | Cấu hình biến môi trường và TLS |
+| mysql/schema.sql | Tạo database/bảng bằng Workbench |
+| mysql/migrations | Migration SQL và metadata |
+| scripts/create-database.mjs | Tạo database nếu được cấp quyền |
+| scripts/migrate.mjs | Migration có checksum và khóa chống chạy đồng thời |
+| .env.example | Mẫu cấu hình, không phải thông tin thật |
 
-## Cấu trúc cho hai dev
-
-- app/page.tsx: giao diện React và các màn hình.
-- app/globals.css: Soft Academic và responsive.
-- app/api/[...path]/route.ts: API, tài khoản và phân quyền.
-- db/schema.ts: 8 bảng dữ liệu.
-- db/index.ts: kết nối Turso/libSQL phía máy chủ.
-- lib/content.ts: 30 mẫu câu và 10 quiz Việt–Anh.
-- scripts/migrate.mjs: chạy migration có kiểm tra checksum.
-- tests: kiểm thử policy và kịch bản tích hợp API.
-
-## Kiểm tra
+## 6. Kiểm tra
 
 ```bash
 npm run typecheck
@@ -79,8 +86,12 @@ npm test
 npm run build
 ```
 
-Để kiểm tra tự động bản build với database tạm, chạy `node tests/run-next-integration.mjs`. Khi máy chủ local đang chạy, dùng `node tests/integration.mjs` để kiểm thử API với dữ liệu mẫu mới. Chỉ chạy test tích hợp trên database phát triển: test có tạo tài khoản và nhóm.
+Có MySQL phát triển và tài khoản được phép tạo database tạm thì chạy `npm run test:integration` sau build. Script tạo một database tên `bridgemate_test_*`, chạy migration hai lần để kiểm tra bỏ qua bản đã áp dụng, chạy API test rồi xóa đúng database tạm đó. Không dùng tài khoản production cho test này.
 
-## Giới hạn MVP
+MySQL DDL tự commit. Script lưu tiến độ theo từng statement, nhưng nếu tiến trình dừng đúng giữa DDL và cập nhật nhật ký thì cần kiểm tra thủ công trước khi chạy lại. Không chỉnh migration đã áp dụng.
 
-Chưa có AI translation, xác minh email, khôi phục mật khẩu hoặc giới hạn tần suất đăng ký/đăng nhập. Cần bổ sung trước khi mở đăng ký công khai rộng rãi. Tên trong demo là giả định.
+## 7. Dữ liệu cũ và giới hạn
+
+Dữ liệu trên Sites/Turso chưa được chuyển vào MySQL. Bộ SQL này tạo schema mới; không nhập mật khẩu dạng văn bản và không sao chép các phiên đăng nhập đang hoạt động. Website Sites cũ vẫn giữ nguyên.
+
+Chưa có dịch AI, xác minh email, khôi phục mật khẩu hoặc rate limiting cho đăng nhập. Nội dung demo là giả định. Không đưa `.env.local`, mật khẩu, file dump dữ liệu người dùng hoặc node_modules lên GitHub.

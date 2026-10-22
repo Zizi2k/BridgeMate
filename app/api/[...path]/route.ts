@@ -1,6 +1,6 @@
 import {getDb} from '../../../db';
 import {users,sessions,teams,members,tasks,understandings,comments,attempts} from '../../../db/schema';
-import {and,eq,gt,desc} from 'drizzle-orm';
+import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,canProgress,taskChanged,scoreAnswers} from '../../../lib/policy';
 export const dynamic='force-dynamic';
@@ -16,22 +16,20 @@ async function handle(req:Request){
  const db=getDb(),url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,'').split('/').filter(Boolean),method=req.method;
  const ok=(data:any,status=200,headers:Record<string,string>={})=>Response.json({data},{status,headers:{'Cache-Control':'no-store',...headers}});
  const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('bm_session='))?.slice(11);
- const platformUserId:string|null=null; // Vercel uses the application cookie only; never trust client-supplied identity headers.
  let user:any=null;
- if(token){const s=await db.select().from(sessions).where(and(eq(sessions.id,token),gt(sessions.expires,Date.now()))).get();if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).get()}
- if(!user&&platformUserId){const s=await db.select().from(sessions).where(and(eq(sessions.platformUserId,platformUserId),gt(sessions.expires,Date.now()))).orderBy(desc(sessions.expires)).get();if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).get()}
+ if(token){const s=await db.select().from(sessions).where(and(eq(sessions.id,token),gt(sessions.expires,Date.now()))).limit(1).then(rows=>rows[0]);if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).limit(1).then(rows=>rows[0])}
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
  check(JSON.stringify(body).length<30000,'TOO_LARGE',413);
- async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));const row={id,userId:u.id,expires:Date.now()+604800000,platformUserId:platformUserId||null};if(platformUserId){await db.batch([db.delete(sessions).where(eq(sessions.platformUserId,platformUserId)),db.insert(sessions).values(row)])}else{await db.insert(sessions).values(row)};return ok(publicUser(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
- if(path[0]==='health')return ok({status:'ok'});
+ async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(publicUser(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
+ if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
  if(path[0]==='auth'){
   if(path[1]==='me')return ok(user?publicUser(user):null);
-  if(path[1]==='logout'&&method==='POST'){if(token)await db.delete(sessions).where(eq(sessions.id,token));if(platformUserId)await db.delete(sessions).where(eq(sessions.platformUserId,platformUserId));return ok(null,200,{'Set-Cookie':'bm_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'})}
+  if(path[1]==='logout'&&method==='POST'){if(token)await db.delete(sessions).where(eq(sessions.id,token));return ok(null,200,{'Set-Cookie':'bm_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'})}
   if((path[1]==='register'||path[1]==='login')&&method==='POST'){
    const email=str(body.email,254).toLowerCase(),password=str(body.password,128);check(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
-   const u=await db.select().from(users).where(eq(users.email,email)).get();
+   const u=await db.select().from(users).where(eq(users.email,email)).limit(1).then(rows=>rows[0]);
    if(path[1]==='register'){check(password.length>=8);check(!u,'EMAIL_EXISTS',409);const n={id:uid(),name:str(body.name,80),email,password:await hash(password),demo:0};await db.insert(users).values(n);return session(n)}
    check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);return session(u);
   }
@@ -41,27 +39,27 @@ async function handle(req:Request){
    const t={id:uid(),name:'Vietnam × WCC',description:'BridgeMate • A shared space for our student project',ownerId:id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};
    const people=[u,...['Minh Anh','Bao Duy','Sofia Chen','James Wilson','Emma Davis'].map(name=>({id:uid(),name,email:`demo-${uid()}@example.invalid`,password:'disabled',demo:1}))];
    const due=(d:number)=>new Date(Date.now()+d*86400000).toISOString();
-   await db.batch([db.insert(users).values(people),db.insert(teams).values(t),db.insert(members).values(people.map((p,i)=>({id:uid(),teamId:t.id,userId:p.id,role:i===0?'owner':'member'}))),db.insert(tasks).values([
+   await db.transaction(async tx=>{await tx.insert(users).values(people);await tx.insert(teams).values(t);await tx.insert(members).values(people.map((p,i)=>({id:uid(),teamId:t.id,userId:p.id,role:i===0?'owner':'member'})));await tx.insert(tasks).values([
     {id:uid(),teamId:t.id,title:'Design the bilingual homepage',description:'Create a welcoming homepage for Vietnamese and WCC students. Include desktop and mobile layouts.',deliverable:'A shared design link with both layouts',assigneeId:id,createdBy:id,dueAt:due(3),priority:'high',status:'todo',version:1,createdAt:now()},
     {id:uid(),teamId:t.id,title:'Review our communication phrasebook',description:'Review the English and Vietnamese phrases. Make sure the tone is clear and respectful.',deliverable:'30 reviewed bilingual phrases',assigneeId:people[1].id,createdBy:id,dueAt:due(4),priority:'medium',status:'progress',version:1,createdAt:now()},
     {id:uid(),teamId:t.id,title:'Prepare the project poster',description:'Use our sage green style. Explain the problem, solution and understanding confirmation flow.',deliverable:'An editable poster and a PDF export',assigneeId:people[3].id,createdBy:id,dueAt:due(6),priority:'medium',status:'todo',version:1,createdAt:now()},
     {id:uid(),teamId:t.id,title:'Agree on our shared project goals',description:'Discuss the core features and divide responsibilities across six members.',deliverable:'An agreed scope and team assignment',assigneeId:people[4].id,createdBy:id,dueAt:due(-1),priority:'low',status:'done',version:1,createdAt:now()}
-   ])]);return session(u);
+   ]);});return session(u);
   }
   throw new ApiError('NOT_FOUND',404);
  }
  check(user,'UNAUTHORIZED',401);
- async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).get();const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).get();check(team&&member,'FORBIDDEN',403);return team}
- async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).get();check(task,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
+ async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member,'FORBIDDEN',403);return team}
+ async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
  if(path[0]==='teams'){
   if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(eq(members.userId,user.id));return ok(list)}
-  if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.batch([db.insert(teams).values(t),db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})]);return ok(t,201)}
-  if(path[1]==='join'&&method==='POST'){const t=await db.select().from(teams).where(eq(teams.invite,str(body.invite,32).toUpperCase())).get();check(t,'INVALID_INVITE',404);const m=await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).get();if(!m)await db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return ok(t)}
+  if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.transaction(async tx=>{await tx.insert(teams).values(t);await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})});return ok(t,201)}
+  if(path[1]==='join'&&method==='POST'){const t=await db.select().from(teams).where(eq(teams.invite,str(body.invite,32).toUpperCase())).limit(1).then(rows=>rows[0]);check(t,'INVALID_INVITE',404);const m=await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);if(!m)await db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return ok(t)}
   const t=await teamAccess(path[1]);
   if(path[2]==='members'&&method==='GET')return ok(await db.select({id:users.id,name:users.name,role:members.role,demo:users.demo}).from(members).innerJoin(users,eq(members.userId,users.id)).where(eq(members.teamId,t.id)));
   if(path[2]==='tasks'){
    if(method==='GET'){const ts=await db.select().from(tasks).where(eq(tasks.teamId,t.id)).orderBy(desc(tasks.createdAt));const all=await db.select().from(understandings).innerJoin(tasks,eq(tasks.id,understandings.taskId)).where(eq(tasks.teamId,t.id));return ok(ts.map(x=>({...x,understanding:all.filter(r=>r.understandings.taskId===x.id&&r.understandings.taskVersion===x.version).sort((a,b)=>b.understandings.createdAt.localeCompare(a.understandings.createdAt))[0]?.understandings.status||'pending'})))}
-   if(method==='POST'){check(['low','medium','high'].includes(body.priority));check(Number.isFinite(Date.parse(body.dueAt)));check(await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,body.assigneeId))).get());const task={id:uid(),teamId:t.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId:body.assigneeId,createdBy:user.id,dueAt:new Date(body.dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};await db.insert(tasks).values(task);return ok(task,201)}
+   if(method==='POST'){check(['low','medium','high'].includes(body.priority));check(Number.isFinite(Date.parse(body.dueAt)));check(await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,body.assigneeId))).limit(1).then(rows=>rows[0]));const task={id:uid(),teamId:t.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId:body.assigneeId,createdBy:user.id,dueAt:new Date(body.dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};await db.insert(tasks).values(task);return ok(task,201)}
   }
   if(path.length===2&&method==='GET')return ok(t);
  }
@@ -73,7 +71,7 @@ async function handle(req:Request){
    for(const k of ['title','description','deliverable','assigneeId','dueAt','priority'])if(k in body){check(edit,'FORBIDDEN',403);update[k]=str(body[k],k==='description'?4000:1000)}
    if(update.title)check(update.title.length<=160);if(update.priority)check(['low','medium','high'].includes(update.priority));
    if(update.dueAt){check(Number.isFinite(Date.parse(update.dueAt)));update.dueAt=new Date(update.dueAt).toISOString()}
-   if(update.assigneeId)check(await db.select().from(members).where(and(eq(members.teamId,team.id),eq(members.userId,update.assigneeId))).get());
+   if(update.assigneeId)check(await db.select().from(members).where(and(eq(members.teamId,team.id),eq(members.userId,update.assigneeId))).limit(1).then(rows=>rows[0]));
    if('status'in body){check(['todo','progress','done'].includes(body.status));update.status=body.status}
    check(Object.keys(update).length);if(taskChanged(task,update))update.version=task.version+1;await db.update(tasks).set(update).where(eq(tasks.id,task.id));return ok({id:task.id});
   }
@@ -81,8 +79,8 @@ async function handle(req:Request){
   if(path[2]==='comments'&&method==='POST'){const c={id:uid(),taskId:task.id,authorId:user.id,content:str(body.content,2000),createdAt:now()};await db.insert(comments).values(c);return ok(c,201)}
  }
  if(path[0]==='understandings'&&path[2]==='review'&&method==='PATCH'){
-  const u=await db.select().from(understandings).where(eq(understandings.id,path[1])).get();check(u,'NOT_FOUND',404);const {task,team}=await taskAccess(u.taskId);check(canEdit(task,user.id,team.ownerId),'FORBIDDEN',403);check(u.taskVersion===task.version,'STALE_VERSION',409);check(u.status==='submitted','ALREADY_REVIEWED',409);
-  const latest=await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)).get();check(latest?.id===u.id,'STALE_VERSION',409);check(['confirmed','clarify'].includes(body.status));const feedback=body.status==='clarify'?str(body.feedback,2000):(typeof body.feedback==='string'?body.feedback.slice(0,2000):'');await db.update(understandings).set({status:body.status,feedback}).where(eq(understandings.id,u.id));return ok({id:u.id});
+  const u=await db.select().from(understandings).where(eq(understandings.id,path[1])).limit(1).then(rows=>rows[0]);check(u,'NOT_FOUND',404);const {task,team}=await taskAccess(u.taskId);check(canEdit(task,user.id,team.ownerId),'FORBIDDEN',403);check(u.taskVersion===task.version,'STALE_VERSION',409);check(u.status==='submitted','ALREADY_REVIEWED',409);
+  const latest=await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)).limit(1).then(rows=>rows[0]);check(latest?.id===u.id,'STALE_VERSION',409);check(['confirmed','clarify'].includes(body.status));const feedback=body.status==='clarify'?str(body.feedback,2000):(typeof body.feedback==='string'?body.feedback.slice(0,2000):'');await db.update(understandings).set({status:body.status,feedback}).where(eq(understandings.id,u.id));return ok({id:u.id});
  }
  if(path[0]==='phrases'&&method==='GET')return ok({phrases,categories});
  if(path[0]==='quiz'){

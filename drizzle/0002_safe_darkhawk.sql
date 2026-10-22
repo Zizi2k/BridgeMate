@@ -1,1 +1,0 @@
-ALTER TABLE `sessions` ADD `platform_user_id` text;

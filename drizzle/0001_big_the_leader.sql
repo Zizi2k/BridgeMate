@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX `members_team_user_unique` ON `members` (`team_id`,`user_id`);
