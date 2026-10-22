@@ -1,0 +1,95 @@
+import {getDb} from '../../../db';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts} from '../../../db/schema';
+import {and,eq,gt,desc} from 'drizzle-orm';
+import {phrases,categories,questions} from '../../../lib/content';
+import {canEdit,canProgress,taskChanged,scoreAnswers} from '../../../lib/policy';
+export const dynamic='force-dynamic';
+export const runtime='nodejs';
+const uid=()=>crypto.randomUUID();const now=()=>new Date().toISOString();
+class ApiError extends Error{constructor(public code:string,public status=400){super(code)}}
+function check(v:any,code='VALIDATION',status=400):asserts v{if(!v)throw new ApiError(code,status)}
+function str(v:any,max=4000){check(typeof v==='string'&&v.trim().length>0&&v.length<=max);return v.trim()}
+const hex=(v:ArrayBuffer|Uint8Array)=>Array.from(new Uint8Array(v instanceof Uint8Array?v.buffer:v)).map(x=>x.toString(16).padStart(2,'0')).join('');
+async function hash(password:string,salt=hex(crypto.getRandomValues(new Uint8Array(16)))){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);return salt+':'+hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:100000},key,256));}
+function publicUser(u:any){return {id:u.id,name:u.name,email:u.email,demo:!!u.demo}}
+async function handle(req:Request){
+ const db=getDb(),url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,'').split('/').filter(Boolean),method=req.method;
+ const ok=(data:any,status=200,headers:Record<string,string>={})=>Response.json({data},{status,headers:{'Cache-Control':'no-store',...headers}});
+ const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('bm_session='))?.slice(11);
+ const platformUserId:string|null=null; // Vercel uses the application cookie only; never trust client-supplied identity headers.
+ let user:any=null;
+ if(token){const s=await db.select().from(sessions).where(and(eq(sessions.id,token),gt(sessions.expires,Date.now()))).get();if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).get()}
+ if(!user&&platformUserId){const s=await db.select().from(sessions).where(and(eq(sessions.platformUserId,platformUserId),gt(sessions.expires,Date.now()))).orderBy(desc(sessions.expires)).get();if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).get()}
+ if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
+ const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
+ check(body&&typeof body==='object'&&!Array.isArray(body));
+ check(JSON.stringify(body).length<30000,'TOO_LARGE',413);
+ async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));const row={id,userId:u.id,expires:Date.now()+604800000,platformUserId:platformUserId||null};if(platformUserId){await db.batch([db.delete(sessions).where(eq(sessions.platformUserId,platformUserId)),db.insert(sessions).values(row)])}else{await db.insert(sessions).values(row)};return ok(publicUser(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
+ if(path[0]==='health')return ok({status:'ok'});
+ if(path[0]==='auth'){
+  if(path[1]==='me')return ok(user?publicUser(user):null);
+  if(path[1]==='logout'&&method==='POST'){if(token)await db.delete(sessions).where(eq(sessions.id,token));if(platformUserId)await db.delete(sessions).where(eq(sessions.platformUserId,platformUserId));return ok(null,200,{'Set-Cookie':'bm_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'})}
+  if((path[1]==='register'||path[1]==='login')&&method==='POST'){
+   const email=str(body.email,254).toLowerCase(),password=str(body.password,128);check(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+   const u=await db.select().from(users).where(eq(users.email,email)).get();
+   if(path[1]==='register'){check(password.length>=8);check(!u,'EMAIL_EXISTS',409);const n={id:uid(),name:str(body.name,80),email,password:await hash(password),demo:0};await db.insert(users).values(n);return session(n)}
+   check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);return session(u);
+  }
+  if(path[1]==='demo'&&method==='POST'){
+   if(user)return ok(publicUser(user));
+   const id=uid(),u={id,name:'Alex Morgan',email:`demo-${id}@example.invalid`,password:'disabled',demo:1};
+   const t={id:uid(),name:'Vietnam × WCC',description:'BridgeMate • A shared space for our student project',ownerId:id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};
+   const people=[u,...['Minh Anh','Bao Duy','Sofia Chen','James Wilson','Emma Davis'].map(name=>({id:uid(),name,email:`demo-${uid()}@example.invalid`,password:'disabled',demo:1}))];
+   const due=(d:number)=>new Date(Date.now()+d*86400000).toISOString();
+   await db.batch([db.insert(users).values(people),db.insert(teams).values(t),db.insert(members).values(people.map((p,i)=>({id:uid(),teamId:t.id,userId:p.id,role:i===0?'owner':'member'}))),db.insert(tasks).values([
+    {id:uid(),teamId:t.id,title:'Design the bilingual homepage',description:'Create a welcoming homepage for Vietnamese and WCC students. Include desktop and mobile layouts.',deliverable:'A shared design link with both layouts',assigneeId:id,createdBy:id,dueAt:due(3),priority:'high',status:'todo',version:1,createdAt:now()},
+    {id:uid(),teamId:t.id,title:'Review our communication phrasebook',description:'Review the English and Vietnamese phrases. Make sure the tone is clear and respectful.',deliverable:'30 reviewed bilingual phrases',assigneeId:people[1].id,createdBy:id,dueAt:due(4),priority:'medium',status:'progress',version:1,createdAt:now()},
+    {id:uid(),teamId:t.id,title:'Prepare the project poster',description:'Use our sage green style. Explain the problem, solution and understanding confirmation flow.',deliverable:'An editable poster and a PDF export',assigneeId:people[3].id,createdBy:id,dueAt:due(6),priority:'medium',status:'todo',version:1,createdAt:now()},
+    {id:uid(),teamId:t.id,title:'Agree on our shared project goals',description:'Discuss the core features and divide responsibilities across six members.',deliverable:'An agreed scope and team assignment',assigneeId:people[4].id,createdBy:id,dueAt:due(-1),priority:'low',status:'done',version:1,createdAt:now()}
+   ])]);return session(u);
+  }
+  throw new ApiError('NOT_FOUND',404);
+ }
+ check(user,'UNAUTHORIZED',401);
+ async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).get();const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).get();check(team&&member,'FORBIDDEN',403);return team}
+ async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).get();check(task,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
+ if(path[0]==='teams'){
+  if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(eq(members.userId,user.id));return ok(list)}
+  if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.batch([db.insert(teams).values(t),db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})]);return ok(t,201)}
+  if(path[1]==='join'&&method==='POST'){const t=await db.select().from(teams).where(eq(teams.invite,str(body.invite,32).toUpperCase())).get();check(t,'INVALID_INVITE',404);const m=await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).get();if(!m)await db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return ok(t)}
+  const t=await teamAccess(path[1]);
+  if(path[2]==='members'&&method==='GET')return ok(await db.select({id:users.id,name:users.name,role:members.role,demo:users.demo}).from(members).innerJoin(users,eq(members.userId,users.id)).where(eq(members.teamId,t.id)));
+  if(path[2]==='tasks'){
+   if(method==='GET'){const ts=await db.select().from(tasks).where(eq(tasks.teamId,t.id)).orderBy(desc(tasks.createdAt));const all=await db.select().from(understandings).innerJoin(tasks,eq(tasks.id,understandings.taskId)).where(eq(tasks.teamId,t.id));return ok(ts.map(x=>({...x,understanding:all.filter(r=>r.understandings.taskId===x.id&&r.understandings.taskVersion===x.version).sort((a,b)=>b.understandings.createdAt.localeCompare(a.understandings.createdAt))[0]?.understandings.status||'pending'})))}
+   if(method==='POST'){check(['low','medium','high'].includes(body.priority));check(Number.isFinite(Date.parse(body.dueAt)));check(await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,body.assigneeId))).get());const task={id:uid(),teamId:t.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId:body.assigneeId,createdBy:user.id,dueAt:new Date(body.dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};await db.insert(tasks).values(task);return ok(task,201)}
+  }
+  if(path.length===2&&method==='GET')return ok(t);
+ }
+ if(path[0]==='tasks'){
+  const {task,team}=await taskAccess(path[1]);
+  if(path.length===2&&method==='GET'){return ok({...task,understandings:await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)),comments:await db.select({id:comments.id,authorId:comments.authorId,content:comments.content,createdAt:comments.createdAt,name:users.name}).from(comments).innerJoin(users,eq(comments.authorId,users.id)).where(eq(comments.taskId,task.id)).orderBy(comments.createdAt)})}
+  if(path.length===2&&method==='PATCH'){
+   check(canProgress(task,user.id,team.ownerId),'FORBIDDEN',403);const edit=canEdit(task,user.id,team.ownerId),update:any={};
+   for(const k of ['title','description','deliverable','assigneeId','dueAt','priority'])if(k in body){check(edit,'FORBIDDEN',403);update[k]=str(body[k],k==='description'?4000:1000)}
+   if(update.title)check(update.title.length<=160);if(update.priority)check(['low','medium','high'].includes(update.priority));
+   if(update.dueAt){check(Number.isFinite(Date.parse(update.dueAt)));update.dueAt=new Date(update.dueAt).toISOString()}
+   if(update.assigneeId)check(await db.select().from(members).where(and(eq(members.teamId,team.id),eq(members.userId,update.assigneeId))).get());
+   if('status'in body){check(['todo','progress','done'].includes(body.status));update.status=body.status}
+   check(Object.keys(update).length);if(taskChanged(task,update))update.version=task.version+1;await db.update(tasks).set(update).where(eq(tasks.id,task.id));return ok({id:task.id});
+  }
+  if(path[2]==='understandings'&&method==='POST'){check(task.assigneeId===user.id,'FORBIDDEN',403);const row={id:uid(),taskId:task.id,taskVersion:task.version,authorId:user.id,content:str(body.content,2000),status:'submitted',feedback:'',createdAt:now()};await db.insert(understandings).values(row);return ok(row,201)}
+  if(path[2]==='comments'&&method==='POST'){const c={id:uid(),taskId:task.id,authorId:user.id,content:str(body.content,2000),createdAt:now()};await db.insert(comments).values(c);return ok(c,201)}
+ }
+ if(path[0]==='understandings'&&path[2]==='review'&&method==='PATCH'){
+  const u=await db.select().from(understandings).where(eq(understandings.id,path[1])).get();check(u,'NOT_FOUND',404);const {task,team}=await taskAccess(u.taskId);check(canEdit(task,user.id,team.ownerId),'FORBIDDEN',403);check(u.taskVersion===task.version,'STALE_VERSION',409);check(u.status==='submitted','ALREADY_REVIEWED',409);
+  const latest=await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)).get();check(latest?.id===u.id,'STALE_VERSION',409);check(['confirmed','clarify'].includes(body.status));const feedback=body.status==='clarify'?str(body.feedback,2000):(typeof body.feedback==='string'?body.feedback.slice(0,2000):'');await db.update(understandings).set({status:body.status,feedback}).where(eq(understandings.id,u.id));return ok({id:u.id});
+ }
+ if(path[0]==='phrases'&&method==='GET')return ok({phrases,categories});
+ if(path[0]==='quiz'){
+  if(method==='GET')return ok({questions:questions.map(({correct,explanationEn,explanationVi,...q})=>q),attempts:await db.select({id:attempts.id,score:attempts.score,createdAt:attempts.createdAt}).from(attempts).where(eq(attempts.userId,user.id)).orderBy(desc(attempts.createdAt)).limit(10)});
+  if(method==='POST'){let score;try{score=scoreAnswers(body.answers,questions)}catch{throw new ApiError('VALIDATION')}await db.insert(attempts).values({id:uid(),userId:user.id,score,answers:JSON.stringify(body.answers),createdAt:now()});return ok({score,total:questions.length,review:questions.map(q=>({id:q.id,correct:q.correct,en:q.explanationEn,vi:q.explanationVi}))})}
+ }
+ throw new ApiError('NOT_FOUND',404);
+}
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+export const GET=safe;export const POST=safe;export const PATCH=safe;

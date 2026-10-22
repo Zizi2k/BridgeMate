@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+const base=process.env.BRIDGEMATE_TEST_URL||'http://localhost:3000/api/';
+function client(platformUserId='',cookies=true){let cookie='';return async(path,method='GET',body,expected=200)=>{const r=await fetch(base+path,{method,headers:{...(cookies&&cookie?{Cookie:cookie}:{}),...(platformUserId?{'oai-authenticated-user-id':platformUserId}:{}),...(method==='GET'?{}:{'Content-Type':'application/json'})},...(body?{body:JSON.stringify(body)}:{})});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const j=await r.json();assert.equal(r.status,expected,`${method} ${path}: ${JSON.stringify(j)}`);return j.data;}}
+const a=client(),b=client(),outsider=client(),tag=crypto.randomUUID();
+await a('health');
+const ua=await a('auth/register','POST',{name:'Test Owner',email:`a-${tag}@example.test`,password:'TestPass123!'});
+const ub=await b('auth/register','POST',{name:'Test Member',email:`b-${tag}@example.test`,password:'TestPass123!'});
+await outsider('auth/register','POST',{name:'Test Outsider',email:`x-${tag}@example.test`,password:'TestPass123!'});
+const team=await a('teams','POST',{name:'Integration Team',description:'Disposable local test'},201);
+await b('teams/join','POST',{invite:team.invite});await b('teams/join','POST',{invite:team.invite});
+assert.equal((await a(`teams/${team.id}/members`)).length,2);
+await outsider(`teams/${team.id}/members`,'GET',undefined,403);
+const task=await a(`teams/${team.id}/tasks`,'POST',{title:'Integration task',description:'Build both layouts',deliverable:'Two designs',assigneeId:ub.id,dueAt:new Date(Date.now()+86400000).toISOString(),priority:'high'},201);
+await outsider(`tasks/${task.id}`,'GET',undefined,403);
+await b(`tasks/${task.id}`,'PATCH',{description:'not allowed'},403);
+await a(`tasks/${task.id}/understandings`,'POST',{content:'Wrong assignee'},403);
+const u=await b(`tasks/${task.id}/understandings`,'POST',{content:'I will deliver both layouts tomorrow.'},201);
+await a(`understandings/${u.id}/review`,'PATCH',{status:'clarify',feedback:'Please include mobile.'});
+const u2=await b(`tasks/${task.id}/understandings`,'POST',{content:'I will include desktop and mobile.'},201);
+await a(`understandings/${u2.id}/review`,'PATCH',{status:'confirmed'});
+await a(`tasks/${task.id}`,'PATCH',{deliverable:'Two designs and a PDF'});
+assert.equal((await a(`tasks/${task.id}`)).version,2);
+assert.equal((await a(`teams/${team.id}/tasks`))[0].understanding,'pending');
+await a(`understandings/${u2.id}/review`,'PATCH',{status:'confirmed'},409);
+await b(`tasks/${task.id}`,'PATCH',{status:'done'});
+await b(`tasks/${task.id}/comments`,'POST',{content:'Finished the draft.'},201);
+assert.equal((await a(`tasks/${task.id}`)).comments.length,1);
+assert.equal((await b('phrases')).phrases.length,30);
+const quiz=await b('quiz');assert.equal(quiz.questions.length,10);assert.ok(!('correct' in quiz.questions[0]));
+await b('quiz','POST',{answers:[]},400);
+assert.equal((await b('quiz','POST',{answers:[0,1,2,0,1,2,0,1,2,0]})).score,10);
+assert.equal((await b('quiz')).attempts[0].score,10);
+await a('auth/logout','POST',{});assert.equal(await a('auth/me'),null);
+await a('auth/login','POST',{email:`a-${tag}@example.test`,password:'TestPass123!'});
+assert.equal((await a('auth/me')).id,ua.id);
+console.log('PASS: registration, login/logout, teams, duplicate join, membership isolation, task permissions, understanding review/versioning, comments, 30 phrases, server-scored quiz and persistence.');
+
+
+const spoof=client('untrusted-header',false);
+assert.equal(await spoof('auth/me'),null);
+await spoof('teams','GET',undefined,401);
+console.log('PASS: client-supplied identity headers are not trusted on Vercel.');

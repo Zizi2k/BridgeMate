@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792631913857,
+      "tag": "0000_lovely_monster_badoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792632376973,
+      "tag": "0001_big_the_leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792633077379,
+      "tag": "0002_safe_darkhawk",
+      "breakpoints": true
+    }
+  ]
+}

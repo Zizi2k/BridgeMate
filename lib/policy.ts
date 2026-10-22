@@ -1,0 +1,4 @@
+export function canEdit(task:{createdBy:string},userId:string,ownerId:string){return task.createdBy===userId||ownerId===userId;}
+export function canProgress(task:{createdBy:string;assigneeId:string},userId:string,ownerId:string){return canEdit(task,userId,ownerId)||task.assigneeId===userId;}
+export function taskChanged(task:Record<string,unknown>,input:Record<string,unknown>){return ['title','description','deliverable','assigneeId','dueAt'].some(k=>k in input&&input[k]!==task[k]);}
+export function scoreAnswers(answers:unknown,questions:{correct:number;optionsEn:readonly string[]}[]){if(!Array.isArray(answers)||answers.length!==questions.length||answers.some((v,i)=>!Number.isInteger(v)||v<0||v>=questions[i].optionsEn.length))throw new Error('VALIDATION');return answers.filter((v,i)=>v===questions[i].correct).length;}
