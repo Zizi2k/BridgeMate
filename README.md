@@ -35,7 +35,7 @@ npm run db:migrate
 npm run dev
 ```
 
-Lệnh đầu tạo database `bridgemate` nếu chưa tồn tại; lệnh sau tạo 8 bảng. Nếu database được nhà cung cấp tạo sẵn, chỉ chạy `npm run db:migrate`. Mở http://localhost:3000.
+Lệnh đầu tạo database `bridgemate` nếu chưa tồn tại; lệnh sau tạo 9 bảng. Nếu database được nhà cung cấp tạo sẵn, chỉ chạy `npm run db:migrate`. Mở http://localhost:3000.
 
 Có thể thay lệnh tạo database/bảng bằng cách mở `mysql/schema.sql` trong MySQL Workbench và thực thi trên database mới. Chọn một cách khởi tạo: script hoặc Workbench. Nếu đã import thủ công thì không chạy migration ban đầu lên cùng database; cần baseline lịch sử trước.
 
@@ -60,6 +60,7 @@ Không dùng tài khoản root cho ứng dụng thật. Sau khi tạo schema, t�
 - Nhiệm vụ, người phụ trách, hạn và tiến độ.
 - Xác nhận hiểu theo phiên bản nhiệm vụ, phản hồi và bình luận.
 - 30 mẫu câu Việt–Anh, quiz 10 câu chấm ở backend.
+- Trợ lý AI: dịch, đơn giản hóa, viết lịch sự, tóm tắt, tạo checklist và hỏi về nội dung; cần cấu hình OpenAI API. Xem docs/AI_SETUP_VI.md.
 - Giao diện EN/VI, responsive Soft Academic.
 
 ## 5. File quan trọng
@@ -69,7 +70,7 @@ Không dùng tài khoản root cho ứng dụng thật. Sau khi tạo schema, t�
 | app/page.tsx | Giao diện React |
 | app/globals.css | Kiểu trình bày |
 | app/api/[...path]/route.ts | API và phân quyền |
-| db/schema.ts | Schema MySQL 8 bảng |
+| db/schema.ts | Schema MySQL 9 bảng |
 | db/index.ts | MySQL pool và Drizzle |
 | lib/mysql-config.ts | Cấu hình biến môi trường và TLS |
 | mysql/schema.sql | Tạo database/bảng bằng Workbench |
@@ -94,4 +95,4 @@ MySQL DDL tự commit. Script lưu tiến độ theo từng statement, nhưng n�
 
 Dữ liệu trên Sites/Turso chưa được chuyển vào MySQL. Bộ SQL này tạo schema mới; không nhập mật khẩu dạng văn bản và không sao chép các phiên đăng nhập đang hoạt động. Website Sites cũ vẫn giữ nguyên.
 
-Chưa có dịch AI, xác minh email, khôi phục mật khẩu hoặc rate limiting cho đăng nhập. Nội dung demo là giả định. Không đưa `.env.local`, mật khẩu, file dump dữ liệu người dùng hoặc node_modules lên GitHub.
+Trợ lý AI cần khóa API riêng, không dùng trực tiếp gói ChatGPT Plus. Chưa có xác minh email, khôi phục mật khẩu hoặc rate limiting cho đăng nhập. Nội dung demo là giả định. Không đưa `.env.local`, mật khẩu, file dump dữ liệu người dùng hoặc node_modules lên GitHub.

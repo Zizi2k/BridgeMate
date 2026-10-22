@@ -1,4 +1,4 @@
--- BridgeMate MySQL 8 schema for a NEW database. Run once in MySQL Workbench.
+-- BridgeMate MySQL schema for a NEW database. Run once in MySQL Workbench.
 CREATE DATABASE IF NOT EXISTS bridgemate CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE bridgemate;
 
@@ -98,3 +98,13 @@ ALTER TABLE `understandings` ADD CONSTRAINT `understandings_task_id_tasks_id_fk`
 ALTER TABLE `understandings` ADD CONSTRAINT `understandings_author_id_users_id_fk` FOREIGN KEY (`author_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;
 CREATE INDEX `sessions_user_index` ON `sessions` (`user_id`);
 CREATE INDEX `sessions_expiry_index` ON `sessions` (`expires`);
+CREATE TABLE `ai_usage` (
+	`id` varchar(96) NOT NULL,
+	`user_id` varchar(36) NOT NULL,
+	`requests` int NOT NULL DEFAULT 0,
+	`expires` bigint NOT NULL,
+	CONSTRAINT `ai_usage_id` PRIMARY KEY(`id`)
+);
+
+ALTER TABLE `ai_usage` ADD CONSTRAINT `ai_usage_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;
+CREATE INDEX `ai_usage_expiry_index` ON `ai_usage` (`expires`);

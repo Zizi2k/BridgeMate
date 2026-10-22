@@ -1,10 +1,12 @@
+import {generateAI,validateAIInput,AIError} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,canProgress,taskChanged,scoreAnswers} from '../../../lib/policy';
 export const dynamic='force-dynamic';
 export const runtime='nodejs';
+export const maxDuration=60;
 const uid=()=>crypto.randomUUID();const now=()=>new Date().toISOString();
 class ApiError extends Error{constructor(public code:string,public status=400){super(code)}}
 function check(v:any,code='VALIDATION',status=400):asserts v{if(!v)throw new ApiError(code,status)}
@@ -51,6 +53,26 @@ async function handle(req:Request){
  check(user,'UNAUTHORIZED',401);
  async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member,'FORBIDDEN',403);return team}
  async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
+ if(path[0]==='ai'){
+  const configured=!!process.env.OPENAI_API_KEY&&process.env.AI_ENABLED!=='false';
+  const dailyLimit=Math.min(200,Math.max(1,Number(process.env.AI_DAILY_LIMIT)||30));
+  if(path[1]==='status'&&method==='GET')return ok({configured,dailyLimit});
+  if(path[1]==='assist'&&method==='POST'){
+   if(!configured)throw new AIError('AI_NOT_CONFIGURED',503);
+   const input=validateAIInput(body);
+   if(body.taskId){check(typeof body.taskId==='string');await taskAccess(body.taskId)}
+   const time=Date.now(),day=new Date(time).toISOString().slice(0,10);
+   const windows=[{id:user.id+':day:'+day,limit:dailyLimit,expires:Date.parse(day+'T00:00:00Z')+86400000},{id:user.id+':minute:'+Math.floor(time/60000),limit:6,expires:time+120000}];
+   await db.transaction(async tx=>{
+    for(const w of windows){
+     await tx.insert(aiUsage).values({id:w.id,userId:user.id,requests:1,expires:w.expires}).onDuplicateKeyUpdate({set:{requests:sql`${aiUsage.requests}+1`}});
+     const [counter]=await tx.select().from(aiUsage).where(eq(aiUsage.id,w.id)).for('update');
+     if(counter.requests>w.limit)throw new AIError('AI_RATE_LIMIT',429);
+    }
+   });
+   return ok(await generateAI(input,{apiKey:process.env.OPENAI_API_KEY!,model:process.env.OPENAI_MODEL||'gpt-4.1-mini'}));
+  }
+ }
  if(path[0]==='teams'){
   if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(eq(members.userId,user.id));return ok(list)}
   if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.transaction(async tx=>{await tx.insert(teams).values(t);await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})});return ok(t,201)}
@@ -89,5 +111,5 @@ async function handle(req:Request){
  }
  throw new ApiError('NOT_FOUND',404);
 }
-async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
 export const GET=safe;export const POST=safe;export const PATCH=safe;

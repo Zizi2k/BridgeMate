@@ -24,3 +24,7 @@ Base: `/api`. Success: `{data: ...}`; error: `{error: {code: ...}}`. Mutations a
 | POST | /quiz | Submit answers array; receive score and explanations |
 
 Task creation requires title, description, deliverable, assigneeId, dueAt (ISO date), priority (low/medium/high). Status values: todo/progress/done. Understanding values: submitted/confirmed/clarify; pending is derived when no current-version submission exists. Review requires feedback for clarify. Material edits to title, description, deliverable, assignee or deadline invalidate current confirmation by incrementing task.version. Prior submissions remain immutable history except for their one review.
+
+## AI endpoints
+
+GET /api/ai/status returns configured/dailyLimit for signed-in users. POST /api/ai/assist accepts action (translate, simplify, polite, summarize, checklist, ask), text, targetLanguage (en/vi), optional context and taskId. A taskId requires membership in its team. Results are plain text; no task/comment mutations occur. Missing server configuration returns AI_NOT_CONFIGURED. Per-account minute/day quotas are reserved transactionally in ai_usage before contacting OpenAI.
