@@ -112,5 +112,5 @@ async function handle(req:Request){
  }
  throw new ApiError('NOT_FOUND',404);
 }
-async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown};if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
 export const GET=safe;export const POST=safe;export const PATCH=safe;
