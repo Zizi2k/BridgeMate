@@ -104,3 +104,9 @@ Click your avatar in the top bar or the sidebar, then choose **Edit profile / Ch
 Avatar upload accepts JPG, PNG and WebP up to 8 MB. The browser center-crops/resizes to 384 × 384 and compresses before upload; the server checks format and caps the stored data URL at 160,000 characters. Raster avatars are stored in MySQL, not Render's temporary filesystem, so no extra storage key is needed. Choose Remove photo then Save to restore initials. This intentionally supports small avatars, not a general photo gallery.
 
 Migration `0002_dazzling_nekra.sql` adds the profiles table without changing existing user records. `npm start` runs pending migrations before startup on Render. For local development run `npm run db:migrate` before `npm run dev`. The Vercel frontend continues proxying `/api` to Render using `API_BACKEND_URL`.
+
+## Editable Phrasebook / Cẩm nang có thể chỉnh sửa
+
+Phrasebook is personal to each account. The 30 starter phrases remain a read-only source template; the UI allows each user to edit or delete their own copies without changing anyone else's phrasebook. New entries require English, Vietnamese and an existing category. Search and category filtering work for both active entries and Trash. Delete asks for confirmation and moves the entry into Trash; Restore brings it back, including edits made before deletion. Changes persist across sign-ins.
+
+Migration `0003_bored_spectrum.sql` adds `phrase_entries` keyed by account and phrase ID. Starter overrides are resolved at read time, so opening Phrasebook does not write 30 copies to the database. The backend scopes all reads and writes to the signed-in account; it never accepts an owner ID from the browser. API: `GET/POST /api/phrases`, `PATCH/DELETE /api/phrases/:id`, `POST /api/phrases/:id/restore`. DELETE requests use JSON `{}` like the other mutation endpoints. Render's existing prestart applies the migration; local development should run `npm run db:migrate`.
