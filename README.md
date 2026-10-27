@@ -96,3 +96,11 @@ MySQL DDL tự commit. Script lưu tiến độ theo từng statement, nhưng n�
 Dữ liệu trên Sites/Turso chưa được chuyển vào MySQL. Bộ SQL này tạo schema mới; không nhập mật khẩu dạng văn bản và không sao chép các phiên đăng nhập đang hoạt động. Website Sites cũ vẫn giữ nguyên.
 
 Trợ lý AI cần khóa API riêng, không dùng trực tiếp gói ChatGPT Plus. Chưa có xác minh email, khôi phục mật khẩu hoặc rate limiting cho đăng nhập. Nội dung demo là giả định. Không đưa `.env.local`, mật khẩu, file dump dữ liệu người dùng hoặc node_modules lên GitHub.
+
+## Member profiles / Hồ sơ cá nhân
+
+Click your avatar in the top bar or the sidebar, then choose **Edit profile / Chỉnh sửa hồ sơ**. Add a display name, introduction, up to 12 interests, a personal slogan and up to 8 HTTPS social links. **Save & publish profile / Lưu và đăng hồ sơ** publishes the profile to teammates. Click a teammate's picture/name in Our team to view their profile. Only the account owner can edit; people outside shared teams cannot access the profile. Email and password are excluded from the shared profile response.
+
+Avatar upload accepts JPG, PNG and WebP up to 8 MB. The browser center-crops/resizes to 384 × 384 and compresses before upload; the server checks format and caps the stored data URL at 160,000 characters. Raster avatars are stored in MySQL, not Render's temporary filesystem, so no extra storage key is needed. Choose Remove photo then Save to restore initials. This intentionally supports small avatars, not a general photo gallery.
+
+Migration `0002_dazzling_nekra.sql` adds the profiles table without changing existing user records. `npm start` runs pending migrations before startup on Render. For local development run `npm run db:migrate` before `npm run dev`. The Vercel frontend continues proxying `/api` to Render using `API_BACKEND_URL`.

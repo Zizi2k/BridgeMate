@@ -1,6 +1,7 @@
+import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,canProgress,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -23,11 +24,12 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<30000,'TOO_LARGE',413);
- async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(publicUser(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
+ check(JSON.stringify(body).length<(path[0]==='profiles'&&method==='PATCH'?180000:30000),'TOO_LARGE',413);
+ async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);return {...publicUser(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
+ async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
  if(path[0]==='auth'){
-  if(path[1]==='me')return ok(user?publicUser(user):null);
+  if(path[1]==='me')return ok(user?await userSummary(user):null);
   if(path[1]==='logout'&&method==='POST'){if(token)await db.delete(sessions).where(eq(sessions.id,token));return ok(null,200,{'Set-Cookie':'bm_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'})}
   if((path[1]==='register'||path[1]==='login')&&method==='POST'){
    const email=str(body.email,254).toLowerCase(),password=str(body.password,128);check(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
@@ -36,7 +38,7 @@ async function handle(req:Request){
    check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);return session(u);
   }
   if(path[1]==='demo'&&method==='POST'){
-   if(user)return ok(publicUser(user));
+   if(user)return ok(await userSummary(user));
    const id=uid(),u={id,name:'Alex Morgan',email:`demo-${id}@example.invalid`,password:'disabled',demo:1};
    const t={id:uid(),name:'Vietnam × WCC',description:'BridgeMate • A shared space for our student project',ownerId:id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};
    const people=[u,...['Minh Anh','Bao Duy','Sofia Chen','James Wilson','Emma Davis'].map(name=>({id:uid(),name,email:`demo-${uid()}@example.invalid`,password:'disabled',demo:1}))];
@@ -53,6 +55,25 @@ async function handle(req:Request){
  check(user,'UNAUTHORIZED',401);
  async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member,'FORBIDDEN',403);return team}
  async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
+ if(path[0]==='profiles'){
+  const target=path[1]==='me'?user.id:path[1];check(typeof target==='string'&&target.length<=36,'NOT_FOUND',404);
+  if(method==='PATCH'){
+   check(target===user.id,'FORBIDDEN',403);
+   const input=validateProfile(body),updatedAt=now();
+   const row={userId:user.id,bio:input.bio,interests:JSON.stringify(input.interests),slogan:input.slogan,socials:JSON.stringify(input.socials),avatar:input.avatar,updatedAt};
+   await db.transaction(async tx=>{await tx.update(users).set({name:input.name}).where(eq(users.id,user.id));await tx.insert(profiles).values(row).onDuplicateKeyUpdate({set:row});});
+   return ok({id:user.id,...input,updatedAt});
+  }
+  check(method==='GET','NOT_FOUND',404);
+  if(target!==user.id){
+   const viewerTeams=await db.select({teamId:members.teamId}).from(members).where(eq(members.userId,user.id));
+   const targetTeams=await db.select({teamId:members.teamId}).from(members).where(eq(members.userId,target));
+   check(viewerTeams.some(a=>targetTeams.some(b=>a.teamId===b.teamId)),'FORBIDDEN',403);
+  }
+  const [owner]=await db.select({id:users.id,name:users.name}).from(users).where(eq(users.id,target)).limit(1);check(owner,'NOT_FOUND',404);
+  const [p]=await db.select().from(profiles).where(eq(profiles.userId,target)).limit(1);
+  return ok({...owner,bio:p?.bio||'',interests:p?JSON.parse(p.interests):[],slogan:p?.slogan||'',socials:p?JSON.parse(p.socials):[],avatar:p?.avatar||'',updatedAt:p?.updatedAt||null});
+ }
  if(path[0]==='ai'){
   const aiConfig=getAIConfig(process.env);
   const configured=!!aiConfig.apiKey&&process.env.AI_ENABLED!=='false';
@@ -79,7 +100,7 @@ async function handle(req:Request){
   if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.transaction(async tx=>{await tx.insert(teams).values(t);await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})});return ok(t,201)}
   if(path[1]==='join'&&method==='POST'){const t=await db.select().from(teams).where(eq(teams.invite,str(body.invite,32).toUpperCase())).limit(1).then(rows=>rows[0]);check(t,'INVALID_INVITE',404);const m=await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);if(!m)await db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return ok(t)}
   const t=await teamAccess(path[1]);
-  if(path[2]==='members'&&method==='GET')return ok(await db.select({id:users.id,name:users.name,role:members.role,demo:users.demo}).from(members).innerJoin(users,eq(members.userId,users.id)).where(eq(members.teamId,t.id)));
+  if(path[2]==='members'&&method==='GET')return ok(await db.select({id:users.id,name:users.name,role:members.role,demo:users.demo,avatar:profiles.avatar,slogan:profiles.slogan}).from(members).innerJoin(users,eq(members.userId,users.id)).leftJoin(profiles,eq(profiles.userId,users.id)).where(eq(members.teamId,t.id)));
   if(path[2]==='tasks'){
    if(method==='GET'){const ts=await db.select().from(tasks).where(eq(tasks.teamId,t.id)).orderBy(desc(tasks.createdAt));const all=await db.select().from(understandings).innerJoin(tasks,eq(tasks.id,understandings.taskId)).where(eq(tasks.teamId,t.id));return ok(ts.map(x=>({...x,understanding:all.filter(r=>r.understandings.taskId===x.id&&r.understandings.taskVersion===x.version).sort((a,b)=>b.understandings.createdAt.localeCompare(a.understandings.createdAt))[0]?.understandings.status||'pending'})))}
    if(method==='POST'){check(['low','medium','high'].includes(body.priority));check(Number.isFinite(Date.parse(body.dueAt)));check(await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,body.assigneeId))).limit(1).then(rows=>rows[0]));const task={id:uid(),teamId:t.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId:body.assigneeId,createdBy:user.id,dueAt:new Date(body.dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};await db.insert(tasks).values(task);return ok(task,201)}
@@ -112,5 +133,5 @@ async function handle(req:Request){
  }
  throw new ApiError('NOT_FOUND',404);
 }
-async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
 export const GET=safe;export const POST=safe;export const PATCH=safe;

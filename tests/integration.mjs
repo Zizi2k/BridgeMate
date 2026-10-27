@@ -30,6 +30,17 @@ const quiz=await b('quiz');assert.equal(quiz.questions.length,10);assert.ok(!('c
 await b('quiz','POST',{answers:[]},400);
 assert.equal((await b('quiz','POST',{answers:[0,1,2,0,1,2,0,1,2,0]})).score,10);
 assert.equal((await b('quiz')).attempts[0].score,10);
+const avatar='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZksAAAAASUVORK5CYII=';
+const profile={name:'Updated Owner',bio:'Sinh viên CNTT',slogan:'Build together',interests:['Coding','Swimming'],socials:[{platform:'GitHub',url:'https://github.com/Zizi2k'}],avatar};
+await a('profiles/me','PATCH',profile);
+const sharedProfile=await b('profiles/'+ua.id);assert.equal(sharedProfile.slogan,profile.slogan);assert.equal(sharedProfile.avatar,avatar);assert.ok(!('email' in sharedProfile));assert.ok(!('password' in sharedProfile));
+assert.equal((await a('auth/me')).avatar,avatar);
+assert.equal((await b(`teams/${team.id}/members`)).find(m=>m.id===ua.id).avatar,avatar);
+await outsider('profiles/'+ua.id,'GET',undefined,403);
+await b('profiles/'+ua.id,'PATCH',profile,403);
+await a('profiles/me','PATCH',{...profile,socials:[{platform:'Website',url:'javascript:alert(1)'}]},400);
+await a('profiles/me','PATCH',{...profile,avatar:'data:image/svg+xml;base64,PHN2Zz4='},400);
+console.log('PASS: profile persistence, avatar persistence, teammate visibility, private fields, ownership and malicious-input rejection.');
 await a('auth/logout','POST',{});assert.equal(await a('auth/me'),null);
 await a('auth/login','POST',{email:`a-${tag}@example.test`,password:'TestPass123!'});
 assert.equal((await a('auth/me')).id,ua.id);
