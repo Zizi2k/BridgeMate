@@ -110,3 +110,13 @@ Migration `0002_dazzling_nekra.sql` adds the profiles table without changing exi
 Phrasebook is personal to each account. The 30 starter phrases remain a read-only source template; the UI allows each user to edit or delete their own copies without changing anyone else's phrasebook. New entries require English, Vietnamese and an existing category. Search and category filtering work for both active entries and Trash. Delete asks for confirmation and moves the entry into Trash; Restore brings it back, including edits made before deletion. Changes persist across sign-ins.
 
 Migration `0003_bored_spectrum.sql` adds `phrase_entries` keyed by account and phrase ID. Starter overrides are resolved at read time, so opening Phrasebook does not write 30 copies to the database. The backend scopes all reads and writes to the signed-in account; it never accepts an owner ID from the browser. API: `GET/POST /api/phrases`, `PATCH/DELETE /api/phrases/:id`, `POST /api/phrases/:id/restore`. DELETE requests use JSON `{}` like the other mutation endpoints. Render's existing prestart applies the migration; local development should run `npm run db:migrate`.
+
+## Personal Practice & Learn
+
+Every account receives ten virtual starter questions. Add, edit, soft-delete and restore questions in Practice & Learn. Overrides and imported questions belong only to the current user. Quiz attempts store their own question count, and submissions with a stale revision are rejected.
+
+Download `/templates/BridgeMate_Quiz_Template.docx` from the page, replace the sample questions and upload the `.docx`. The server validates the file and returns a preview; confirming the preview adds all questions in one transaction. Imports allow up to 2 MB and 100 questions, with at most 500 stored entries per account including Trash. Word text is imported; images and arbitrary exam layouts are not converted. Optional English fields fall back to Vietnamese. The original Word file is not stored.
+
+Labels: `Câu 1:`, `Question EN:` (optional), `A.` through `D.` (2–4 choices), optional `A EN:` through `D EN:`, `Đáp án: A`, optional `Giải thích:` and `Explanation EN:`. Each label starts a separate Word paragraph. Type question and choice labels manually; automatic list numbering is not supported.
+
+Migration `0004_shallow_rictor.sql` adds only the personal question table; existing quiz history is preserved. The downloadable template can be regenerated with `python scripts/build-quiz-template.py` using python-docx, then rendered for layout review.

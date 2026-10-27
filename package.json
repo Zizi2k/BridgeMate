@@ -11,7 +11,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/policy.test.ts tests/mysql-config.test.ts tests/ai.test.ts tests/profile.test.ts tests/phrasebook.test.ts",
+    "test": "node --experimental-strip-types --test tests/policy.test.ts tests/mysql-config.test.ts tests/ai.test.ts tests/profile.test.ts tests/phrasebook.test.ts tests/practice.test.ts",
     "db:migrate": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/migrate.mjs",
     "db:create": "node --experimental-strip-types --env-file-if-exists=.env.local scripts/create-database.mjs",
     "db:generate": "drizzle-kit generate",
@@ -19,19 +19,22 @@
     "prestart": "npm run db:migrate"
   },
   "dependencies": {
+    "@vercel/functions": "^3.0.0",
+    "drizzle-orm": "0.45.2",
+    "fast-xml-parser": "5.11.2",
+    "lucide-react": "^1.31.0",
+    "mysql2": "^3.15.0",
     "next": "16.3.4",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "lucide-react": "^1.31.0",
-    "drizzle-orm": "0.45.2",
-    "mysql2": "^3.15.0",
-    "@vercel/functions": "^3.0.0"
+    "yauzl": "3.4.0"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "typescript": "5.9.3",
-    "drizzle-kit": "0.31.10"
+    "@types/yauzl": "3.4.0",
+    "drizzle-kit": "0.31.10",
+    "typescript": "5.9.3"
   }
 }

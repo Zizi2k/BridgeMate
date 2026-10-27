@@ -14,3 +14,5 @@ export const aiUsage=mysqlTable('ai_usage',{id:varchar('id',{length:96}).primary
 export const profiles=mysqlTable('profiles',{userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),bio:text('bio').notNull(),interests:text('interests').notNull(),slogan:varchar('slogan',{length:180}).notNull(),socials:text('socials').notNull(),avatar:mediumtext('avatar').notNull(),updatedAt:iso('updated_at').notNull()});
 
 export const phraseEntries=mysqlTable('phrase_entries',{id:varchar('id',{length:64}).notNull(),userId:id('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),category:varchar('category',{length:32}).notNull(),en:text('en').notNull(),vi:text('vi').notNull(),deleted:int('deleted').notNull().default(0),updatedAt:iso('updated_at').notNull()},t=>[primaryKey({columns:[t.userId,t.id]})]);
+
+export const practiceEntries=mysqlTable('practice_entries',{id:varchar('id',{length:64}).notNull(),userId:id('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),content:text('content').notNull(),deleted:int('deleted').notNull().default(0),updatedAt:iso('updated_at').notNull()},t=>[primaryKey({columns:[t.userId,t.id]})]);
