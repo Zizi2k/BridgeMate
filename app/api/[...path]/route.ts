@@ -1,7 +1,8 @@
+import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phrasebook';
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,canProgress,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -126,12 +127,33 @@ async function handle(req:Request){
   const u=await db.select().from(understandings).where(eq(understandings.id,path[1])).limit(1).then(rows=>rows[0]);check(u,'NOT_FOUND',404);const {task,team}=await taskAccess(u.taskId);check(canEdit(task,user.id,team.ownerId),'FORBIDDEN',403);check(u.taskVersion===task.version,'STALE_VERSION',409);check(u.status==='submitted','ALREADY_REVIEWED',409);
   const latest=await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)).limit(1).then(rows=>rows[0]);check(latest?.id===u.id,'STALE_VERSION',409);check(['confirmed','clarify'].includes(body.status));const feedback=body.status==='clarify'?str(body.feedback,2000):(typeof body.feedback==='string'?body.feedback.slice(0,2000):'');await db.update(understandings).set({status:body.status,feedback}).where(eq(understandings.id,u.id));return ok({id:u.id});
  }
- if(path[0]==='phrases'&&method==='GET')return ok({phrases,categories});
+ if(path[0]==='phrases'){
+  if(path.length===1&&method==='GET'){
+   const records=await db.select().from(phraseEntries).where(eq(phraseEntries.userId,user.id)).orderBy(phraseEntries.updatedAt);
+   return ok({...composePhrasebook(phrases,records),categories});
+  }
+  if(path.length===1&&method==='POST'){
+   const input=validatePhrase(body,categories.map(c=>c.id));const row={id:uid(),userId:user.id,...input,deleted:0,updatedAt:now()};await db.insert(phraseEntries).values(row);return ok({id:row.id,...input,custom:true},201);
+  }
+  const id=path[1];check(typeof id==='string'&&/^[a-zA-Z0-9_-]{1,64}$/.test(id),'NOT_FOUND',404);
+  const [saved]=await db.select().from(phraseEntries).where(and(eq(phraseEntries.userId,user.id),eq(phraseEntries.id,id))).limit(1);
+  const original=phrases.find(p=>p.id===id),current=saved||original;check(current,'NOT_FOUND',404);
+  if((path.length===2&&(method==='PATCH'||method==='DELETE'))||(path.length===3&&path[2]==='restore'&&method==='POST')){
+   const restore=path[2]==='restore';
+   if(restore)check(saved?.deleted,'NOT_FOUND',404);
+   if(method==='PATCH')check(!saved?.deleted,'PHRASE_DELETED',409);
+   const input=method==='PATCH'?validatePhrase(body,categories.map(c=>c.id)):{category:current.category,en:current.en,vi:current.vi};
+   const row={id,userId:user.id,...input,deleted:method==='DELETE'?1:0,updatedAt:now()};
+   await db.insert(phraseEntries).values(row).onDuplicateKeyUpdate({set:row});return ok({id,...input,deleted:!!row.deleted});
+  }
+  throw new ApiError('NOT_FOUND',404);
+ }
+
  if(path[0]==='quiz'){
   if(method==='GET')return ok({questions:questions.map(({correct,explanationEn,explanationVi,...q})=>q),attempts:await db.select({id:attempts.id,score:attempts.score,createdAt:attempts.createdAt}).from(attempts).where(eq(attempts.userId,user.id)).orderBy(desc(attempts.createdAt)).limit(10)});
   if(method==='POST'){let score;try{score=scoreAnswers(body.answers,questions)}catch{throw new ApiError('VALIDATION')}await db.insert(attempts).values({id:uid(),userId:user.id,score,answers:JSON.stringify(body.answers),createdAt:now()});return ok({score,total:questions.length,review:questions.map(q=>({id:q.id,correct:q.correct,en:q.explanationEn,vi:q.explanationVi}))})}
  }
  throw new ApiError('NOT_FOUND',404);
 }
-async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
-export const GET=safe;export const POST=safe;export const PATCH=safe;
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof PhraseError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+export const GET=safe;export const POST=safe;export const PATCH=safe;export const DELETE=safe;
