@@ -1,4 +1,4 @@
-import {mysqlTable,varchar,text,int,bigint,uniqueIndex,index} from 'drizzle-orm/mysql-core';
+import {mysqlTable,varchar,text,mediumtext,int,bigint,uniqueIndex,index} from 'drizzle-orm/mysql-core';
 const id=(name='id')=>varchar(name,{length:36});
 const iso=(name:string)=>varchar(name,{length:32});
 export const users=mysqlTable('users',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),email:varchar('email',{length:254}).notNull().unique(),password:varchar('password',{length:255}).notNull(),demo:int('demo').notNull().default(0)});
@@ -10,3 +10,5 @@ export const understandings=mysqlTable('understandings',{id:id().primaryKey(),ta
 export const comments=mysqlTable('comments',{id:id().primaryKey(),taskId:id('task_id').notNull().references(()=>tasks.id),authorId:id('author_id').notNull().references(()=>users.id),content:text('content').notNull(),createdAt:iso('created_at').notNull()});
 export const attempts=mysqlTable('attempts',{id:id().primaryKey(),userId:id('user_id').notNull().references(()=>users.id),score:int('score').notNull(),answers:text('answers').notNull(),createdAt:iso('created_at').notNull()});
 export const aiUsage=mysqlTable('ai_usage',{id:varchar('id',{length:96}).primaryKey(),userId:id('user_id').notNull().references(()=>users.id),requests:int('requests').notNull().default(0),expires:bigint('expires',{mode:'number'}).notNull()},t=>[index('ai_usage_expiry_index').on(t.expires)]);
+
+export const profiles=mysqlTable('profiles',{userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),bio:text('bio').notNull(),interests:text('interests').notNull(),slogan:varchar('slogan',{length:180}).notNull(),socials:text('socials').notNull(),avatar:mediumtext('avatar').notNull(),updatedAt:iso('updated_at').notNull()});
