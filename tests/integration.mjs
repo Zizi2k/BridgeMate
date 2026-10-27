@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 const base=process.env.BRIDGEMATE_TEST_URL||'http://localhost:3000/api/';
 function client(platformUserId='',cookies=true){let cookie='';return async(path,method='GET',body,expected=200)=>{const r=await fetch(base+path,{method,headers:{...(cookies&&cookie?{Cookie:cookie}:{}),...(platformUserId?{'oai-authenticated-user-id':platformUserId}:{}),...(method==='GET'?{}:{'Content-Type':'application/json'})},...(body?{body:JSON.stringify(body)}:{})});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const j=await r.json();assert.equal(r.status,expected,`${method} ${path}: ${JSON.stringify(j)}`);return j.data;}}
@@ -46,6 +47,36 @@ const quiz=await b('quiz');assert.equal(quiz.questions.length,10);assert.ok(!('c
 await b('quiz','POST',{answers:[]},400);
 assert.equal((await b('quiz','POST',{answers:[0,1,2,0,1,2,0,1,2,0]})).score,10);
 assert.equal((await b('quiz')).attempts[0].score,10);
+// Personal question bank CRUD and the deployed Word import contract.
+const beforePractice=await a('quiz');assert.equal(beforePractice.questions.length,10);
+const manageBefore=await a('quiz/manage');const firstQuestion=manageBefore.questions[0];
+const customQuestion={vi:'Câu kiểm thử riêng',optionsVi:['Đúng','Sai'],correct:0,explanationVi:'Giải thích kiểm thử'};
+await a('quiz/questions','POST',customQuestion,201);
+let ownBook=await a('quiz/manage');const custom=ownBook.questions.find(q=>q.vi===customQuestion.vi);assert.ok(custom);
+assert.equal((await b('quiz')).questions.length,10);
+await b('quiz/questions/'+custom.id,'PATCH',customQuestion,404);
+await a('quiz/questions/'+custom.id,'PATCH',{...customQuestion,vi:'Câu riêng đã sửa'});
+await a('quiz/questions/'+firstQuestion.id,'PATCH',{...firstQuestion,vi:'Câu mẫu đã sửa'});
+assert.notEqual((await b('quiz/manage')).questions[0].vi,'Câu mẫu đã sửa');
+await a('quiz','POST',{revision:beforePractice.revision,answers:Array(11).fill(0)},409);
+await a('quiz/questions/'+custom.id,'DELETE',{});
+assert.ok(!(await a('quiz')).questions.some(q=>q.id===custom.id));assert.ok((await a('quiz/manage')).deleted.some(q=>q.id===custom.id));
+await a('quiz/questions/'+custom.id+'/restore','POST',{});
+assert.ok((await a('quiz')).questions.some(q=>q.id===custom.id));
+await a('quiz/questions/'+firstQuestion.id,'DELETE',{});assert.ok(!(await a('quiz')).questions.some(q=>q.id===firstQuestion.id));assert.ok(!(await a('quiz')).questions.some(q=>q.id===firstQuestion.id));
+await a('quiz/questions/'+firstQuestion.id+'/restore','POST',{});
+const template=readFileSync('public/templates/BridgeMate_Quiz_Template.docx');
+const templateResponse=await fetch(new URL('/templates/BridgeMate_Quiz_Template.docx',base));assert.equal(templateResponse.status,200);assert.equal(Buffer.compare(Buffer.from(await templateResponse.arrayBuffer()),template),0);
+await a('quiz/import','POST',{file:Buffer.from('invalid document').toString('base64')},400);
+const parsed=await a('quiz/import','POST',{file:template.toString('base64')});assert.equal(parsed.questions.length,2);
+assert.equal((await a('quiz')).questions.length,11); // Preview must not save anything.
+await a('quiz/questions','POST',{questions:parsed.questions},201);
+const finalQuiz=await a('quiz'),finalManage=await a('quiz/manage');assert.equal(finalQuiz.questions.length,13);assert.ok(!('correct' in finalQuiz.questions[0]));
+const resultPractice=await a('quiz','POST',{revision:finalQuiz.revision,answers:finalQuiz.questions.map(q=>finalManage.questions.find(m=>m.id===q.id).correct)});
+assert.equal(resultPractice.score,13);assert.equal(resultPractice.total,13);assert.equal((await a('quiz')).attempts[0].total,13);
+await a('quiz/questions','POST',{questions:[customQuestion,{...customQuestion,correct:5}]},400);assert.equal((await a('quiz')).questions.length,13);
+console.log('PASS: question CRUD, default overrides, ownership isolation, persistent trash, stale quiz rejection, exact template download, Word preview/import atomicity and dynamic scoring/history.');
+
 const avatar='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZksAAAAASUVORK5CYII=';
 const profile={name:'Updated Owner',bio:'Sinh viên CNTT',slogan:'Build together',interests:['Coding','Swimming'],socials:[{platform:'GitHub',url:'https://github.com/Zizi2k'}],avatar};
 await a('profiles/me','PATCH',profile);

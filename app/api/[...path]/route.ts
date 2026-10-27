@@ -1,8 +1,11 @@
+import {createHash} from 'node:crypto';
+import {composePractice,validateQuestion,PracticeError} from '../../../lib/practice';
+import {readPracticeDocx} from '../../../lib/practice-docx';
 import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phrasebook';
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,canProgress,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -25,7 +28,7 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<(path[0]==='profiles'&&method==='PATCH'?180000:30000),'TOO_LARGE',413);
+ check(JSON.stringify(body).length<(path[0]==='profiles'&&method==='PATCH'?180000:path[0]==='quiz'&&path[1]==='import'?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
  async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);return {...publicUser(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
@@ -150,10 +153,33 @@ async function handle(req:Request){
  }
 
  if(path[0]==='quiz'){
-  if(method==='GET')return ok({questions:questions.map(({correct,explanationEn,explanationVi,...q})=>q),attempts:await db.select({id:attempts.id,score:attempts.score,createdAt:attempts.createdAt}).from(attempts).where(eq(attempts.userId,user.id)).orderBy(desc(attempts.createdAt)).limit(10)});
-  if(method==='POST'){let score;try{score=scoreAnswers(body.answers,questions)}catch{throw new ApiError('VALIDATION')}await db.insert(attempts).values({id:uid(),userId:user.id,score,answers:JSON.stringify(body.answers),createdAt:now()});return ok({score,total:questions.length,review:questions.map(q=>({id:q.id,correct:q.correct,en:q.explanationEn,vi:q.explanationVi}))})}
+  const records=await db.select().from(practiceEntries).where(eq(practiceEntries.userId,user.id));
+  const book=composePractice(questions,records),revision=createHash('sha256').update(JSON.stringify(book.questions)).digest('hex');
+  const save=async(id:string,input:ReturnType<typeof validateQuestion>,deleted=0)=>{const row={id,userId:user.id,content:JSON.stringify(input),deleted,updatedAt:now()};await db.insert(practiceEntries).values(row).onDuplicateKeyUpdate({set:row});};
+  if(method==='GET'&&path.length===1)return ok({questions:book.questions.map(({correct,explanationEn,explanationVi,...q})=>q),revision,attempts:await db.select({id:attempts.id,score:attempts.score,answers:attempts.answers,createdAt:attempts.createdAt}).from(attempts).where(eq(attempts.userId,user.id)).orderBy(desc(attempts.createdAt)).limit(10).then(rows=>rows.map(({answers,...a})=>{let total=10;try{const data=JSON.parse(answers);total=Array.isArray(data)?data.length:data.total}catch{}return {...a,total}}))});
+  if(method==='GET'&&path[1]==='manage')return ok(book);
+  if(method==='POST'&&path[1]==='import'){
+   check(typeof body.file==='string'&&body.file.length<=2800000&&/^[A-Za-z0-9+/]+={0,2}$/.test(body.file),'DOCX_INVALID');
+   return ok({questions:await readPracticeDocx(Buffer.from(body.file,'base64'))});
+  }
+  if(method==='POST'&&path[1]==='questions'&&path.length===2){
+   const inputs=Array.isArray(body.questions)?body.questions:[body];check(inputs.length>0&&inputs.length<=100,'QUESTION_LIMIT');check(records.length+inputs.length<=500,'QUESTION_LIMIT');
+   const values:ReturnType<typeof validateQuestion>[]=inputs.map(validateQuestion);await db.transaction(async tx=>{await tx.insert(practiceEntries).values(values.map(q=>({id:uid(),userId:user.id,content:JSON.stringify(q),deleted:0,updatedAt:now()})))});return ok({imported:values.length},201);
+  }
+  if(path[1]==='questions'&&path[2]){
+   const id=path[2];const current=[...book.questions,...book.deleted].find(q=>q.id===id);check(current,'NOT_FOUND',404);
+   if(method==='PATCH'&&path.length===3){check(!book.deleted.some(q=>q.id===id),'QUESTION_DELETED',409);await save(id,validateQuestion(body));return ok({id})}
+   if(method==='DELETE'&&path.length===3){await save(id,validateQuestion(current),1);return ok({id})}
+   if(method==='POST'&&path[3]==='restore'){await save(id,validateQuestion(current));return ok({id})}
+  }
+  if(method==='POST'&&path.length===1){
+   check(book.questions.length>0,'QUIZ_EMPTY');check(!body.revision||body.revision===revision,'QUIZ_CHANGED',409);
+   let score;try{score=scoreAnswers(body.answers,book.questions)}catch{throw new ApiError('VALIDATION')}
+   await db.insert(attempts).values({id:uid(),userId:user.id,score,answers:JSON.stringify({answers:body.answers,total:book.questions.length}),createdAt:now()});
+   return ok({score,total:book.questions.length,review:book.questions.map(q=>({id:q.id,correct:q.correct,en:q.explanationEn,vi:q.explanationVi}))});
+  }
  }
  throw new ApiError('NOT_FOUND',404);
 }
-async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof PhraseError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof PracticeError)return Response.json({error:{code:e.code,detail:e.detail}},{status:400});if(e instanceof PhraseError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
 export const GET=safe;export const POST=safe;export const PATCH=safe;export const DELETE=safe;
