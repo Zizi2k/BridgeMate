@@ -120,3 +120,15 @@ Download `/templates/BridgeMate_Quiz_Template.docx` from the page, replace the s
 Labels: `Câu 1:`, `Question EN:` (optional), `A.` through `D.` (2–4 choices), optional `A EN:` through `D EN:`, `Đáp án: A`, optional `Giải thích:` and `Explanation EN:`. Each label starts a separate Word paragraph. Type question and choice labels manually; automatic list numbering is not supported.
 
 Migration `0004_shallow_rictor.sql` adds only the personal question table; existing quiz history is preserved. The downloadable template can be regenerated with `python scripts/build-quiz-template.py` using python-docx, then rendered for layout review.
+
+## Team leaders and shared tasks
+
+Each team can elect one leader on Task board or Our team. Every member has one changeable vote; a candidate needs more than half of the total membership. Ties keep the current leader. Successful election atomically sets the leader and clears the round's ballots. The next majority replaces the leader and revokes their old leader-only permissions. Existing teams start with no elected leader.
+
+Only the elected leader or the task creator may delete a task. Deletion hides the parent and its subtasks without erasing stored history. The team owner keeps existing editing rights but needs election to delete other people's tasks.
+
+Tasks retain one primary assignee and can include up to 50 additional collaborators from the same team. The creator, primary assignee, owner and elected leader can manage participants and subtasks. Collaborators can update parent progress; each subtask assignee can update only their own subtask status. Only task editors can change parent requirements.
+
+Subtasks have a title, details, an assigned task participant, an optional deadline and a status. Add/edit/delete structural changes increment the parent requirements version; status updates do not. Reassign or delete a person's subtasks before removing them from the parent task. The primary assignee remains responsible for understanding confirmation.
+
+Migration `0005_abnormal_purifiers.sql` adds the nullable team leader, ballot table, task collaborators, subtasks and soft task deletion. It preserves existing tasks and team ownership. Elections and task writes use a common team-row lock so role changes and assignment changes serialize.

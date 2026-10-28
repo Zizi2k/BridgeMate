@@ -47,6 +47,7 @@ CREATE TABLE `tasks` (
 	`due_at` varchar(32) NOT NULL,
 	`priority` varchar(16) NOT NULL,
 	`status` varchar(16) NOT NULL,
+	`deleted` int NOT NULL DEFAULT 0,
 	`version` int NOT NULL DEFAULT 1,
 	`created_at` varchar(32) NOT NULL,
 	CONSTRAINT `tasks_id` PRIMARY KEY(`id`)
@@ -57,6 +58,7 @@ CREATE TABLE `teams` (
 	`name` varchar(80) NOT NULL,
 	`description` text NOT NULL,
 	`owner_id` varchar(36) NOT NULL,
+	`leader_id` varchar(36),
 	`invite` varchar(32) NOT NULL,
 	CONSTRAINT `teams_id` PRIMARY KEY(`id`),
 	CONSTRAINT `teams_invite_unique` UNIQUE(`invite`)
@@ -138,3 +140,37 @@ CREATE TABLE `phrase_entries` (
 
 ALTER TABLE `phrase_entries` ADD CONSTRAINT `phrase_entries_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE cascade ON UPDATE no action;
 CREATE TABLE IF NOT EXISTS practice_entries (id varchar(64) NOT NULL, user_id varchar(36) NOT NULL, content text NOT NULL, deleted int NOT NULL DEFAULT 0, updated_at varchar(32) NOT NULL, PRIMARY KEY (user_id,id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE);
+
+-- Team leadership and task collaboration
+CREATE TABLE `leader_votes` (
+	`team_id` varchar(36) NOT NULL,
+	`voter_id` varchar(36) NOT NULL,
+	`candidate_id` varchar(36) NOT NULL,
+	CONSTRAINT `leader_votes_team_id_voter_id_pk` PRIMARY KEY(`team_id`,`voter_id`)
+);
+CREATE TABLE `subtasks` (
+	`id` varchar(36) NOT NULL,
+	`task_id` varchar(36) NOT NULL,
+	`title` varchar(160) NOT NULL,
+	`description` text NOT NULL,
+	`assignee_id` varchar(36) NOT NULL,
+	`due_at` varchar(32) NOT NULL DEFAULT '',
+	`status` varchar(16) NOT NULL DEFAULT 'todo',
+	`deleted` int NOT NULL DEFAULT 0,
+	`created_at` varchar(32) NOT NULL,
+	CONSTRAINT `subtasks_id` PRIMARY KEY(`id`)
+);
+CREATE TABLE `task_collaborators` (
+	`task_id` varchar(36) NOT NULL,
+	`user_id` varchar(36) NOT NULL,
+	CONSTRAINT `task_collaborators_task_id_user_id_pk` PRIMARY KEY(`task_id`,`user_id`)
+);
+ALTER TABLE `leader_votes` ADD CONSTRAINT `leader_votes_team_id_teams_id_fk` FOREIGN KEY (`team_id`) REFERENCES `teams`(`id`) ON DELETE cascade ON UPDATE no action;
+ALTER TABLE `leader_votes` ADD CONSTRAINT `leader_votes_voter_id_users_id_fk` FOREIGN KEY (`voter_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;
+ALTER TABLE `leader_votes` ADD CONSTRAINT `leader_votes_candidate_id_users_id_fk` FOREIGN KEY (`candidate_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;
+ALTER TABLE `subtasks` ADD CONSTRAINT `subtasks_task_id_tasks_id_fk` FOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON DELETE cascade ON UPDATE no action;
+ALTER TABLE `subtasks` ADD CONSTRAINT `subtasks_assignee_id_users_id_fk` FOREIGN KEY (`assignee_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;
+ALTER TABLE `task_collaborators` ADD CONSTRAINT `task_collaborators_task_id_tasks_id_fk` FOREIGN KEY (`task_id`) REFERENCES `tasks`(`id`) ON DELETE cascade ON UPDATE no action;
+ALTER TABLE `task_collaborators` ADD CONSTRAINT `task_collaborators_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;
+CREATE INDEX `subtasks_task_index` ON `subtasks` (`task_id`);
+ALTER TABLE `teams` ADD CONSTRAINT `teams_leader_id_users_id_fk` FOREIGN KEY (`leader_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;
