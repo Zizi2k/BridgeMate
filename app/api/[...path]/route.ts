@@ -1,3 +1,4 @@
+import {collaboratorIds,majorityNeeded,electionWinner,taskPermissions,canUpdateSubtask,TeamworkError} from '../../../lib/teamwork';
 import {createHash} from 'node:crypto';
 import {composePractice,validateQuestion,PracticeError} from '../../../lib/practice';
 import {readPracticeDocx} from '../../../lib/practice-docx';
@@ -5,10 +6,10 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
-import {canEdit,canProgress,taskChanged,scoreAnswers} from '../../../lib/policy';
+import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
 export const dynamic='force-dynamic';
 export const runtime='nodejs';
 export const maxDuration=60;
@@ -58,7 +59,7 @@ async function handle(req:Request){
  }
  check(user,'UNAUTHORIZED',401);
  async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member,'FORBIDDEN',403);return team}
- async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
+ async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task&&!task.deleted,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
  if(path[0]==='profiles'){
   const target=path[1]==='me'?user.id:path[1];check(typeof target==='string'&&target.length<=36,'NOT_FOUND',404);
   if(method==='PATCH'){
@@ -100,34 +101,71 @@ async function handle(req:Request){
   }
  }
  if(path[0]==='teams'){
-  if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(eq(members.userId,user.id));return ok(list)}
+  if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,leaderId:teams.leaderId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(eq(members.userId,user.id));return ok(list)}
   if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.transaction(async tx=>{await tx.insert(teams).values(t);await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})});return ok(t,201)}
   if(path[1]==='join'&&method==='POST'){const t=await db.select().from(teams).where(eq(teams.invite,str(body.invite,32).toUpperCase())).limit(1).then(rows=>rows[0]);check(t,'INVALID_INVITE',404);const m=await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);if(!m)await db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return ok(t)}
   const t=await teamAccess(path[1]);
+  if(path[2]==='leadership'){
+   if(method==='GET'){const ms=await db.select({id:members.userId}).from(members).where(eq(members.teamId,t.id)),votes=await db.select().from(leaderVotes).where(eq(leaderVotes.teamId,t.id));return ok({leaderId:t.leaderId,needed:majorityNeeded(ms.length),myVote:votes.find(v=>v.voterId===user.id)?.candidateId||'',counts:ms.map(m=>({id:m.id,votes:votes.filter(v=>v.candidateId===m.id).length}))})}
+   if(method==='POST'){const candidate=str(body.candidateId,36);return ok(await db.transaction(async tx=>{await tx.select().from(teams).where(eq(teams.id,t.id)).for('update');const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,t.id));check(ms.some(m=>m.id===candidate),'CANDIDATE_NOT_MEMBER');await tx.insert(leaderVotes).values({teamId:t.id,voterId:user.id,candidateId:candidate}).onDuplicateKeyUpdate({set:{candidateId:candidate}});const votes=await tx.select().from(leaderVotes).where(eq(leaderVotes.teamId,t.id));const winner=electionWinner(votes,ms.map(m=>m.id));if(winner){await tx.update(teams).set({leaderId:winner}).where(eq(teams.id,t.id));await tx.delete(leaderVotes).where(eq(leaderVotes.teamId,t.id))}return {elected:!!winner,leaderId:winner}}))}
+  }
   if(path[2]==='members'&&method==='GET')return ok(await db.select({id:users.id,name:users.name,role:members.role,demo:users.demo,avatar:profiles.avatar,slogan:profiles.slogan}).from(members).innerJoin(users,eq(members.userId,users.id)).leftJoin(profiles,eq(profiles.userId,users.id)).where(eq(members.teamId,t.id)));
   if(path[2]==='tasks'){
-   if(method==='GET'){const ts=await db.select().from(tasks).where(eq(tasks.teamId,t.id)).orderBy(desc(tasks.createdAt));const all=await db.select().from(understandings).innerJoin(tasks,eq(tasks.id,understandings.taskId)).where(eq(tasks.teamId,t.id));return ok(ts.map(x=>({...x,understanding:all.filter(r=>r.understandings.taskId===x.id&&r.understandings.taskVersion===x.version).sort((a,b)=>b.understandings.createdAt.localeCompare(a.understandings.createdAt))[0]?.understandings.status||'pending'})))}
-   if(method==='POST'){check(['low','medium','high'].includes(body.priority));check(Number.isFinite(Date.parse(body.dueAt)));check(await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,body.assigneeId))).limit(1).then(rows=>rows[0]));const task={id:uid(),teamId:t.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId:body.assigneeId,createdBy:user.id,dueAt:new Date(body.dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};await db.insert(tasks).values(task);return ok(task,201)}
+   if(method==='GET'){
+    const ts=await db.select().from(tasks).where(and(eq(tasks.teamId,t.id),eq(tasks.deleted,0))).orderBy(desc(tasks.createdAt));
+    const all=await db.select().from(understandings).innerJoin(tasks,eq(tasks.id,understandings.taskId)).where(eq(tasks.teamId,t.id));
+    const cs=await db.select({taskId:taskCollaborators.taskId,userId:taskCollaborators.userId}).from(taskCollaborators).innerJoin(tasks,eq(tasks.id,taskCollaborators.taskId)).where(eq(tasks.teamId,t.id));
+    const ss=await db.select({taskId:subtasks.taskId,status:subtasks.status}).from(subtasks).innerJoin(tasks,eq(tasks.id,subtasks.taskId)).where(and(eq(tasks.teamId,t.id),eq(subtasks.deleted,0)));
+    return ok(ts.map(x=>({...x,collaboratorIds:cs.filter(c=>c.taskId===x.id&&c.userId!==x.assigneeId).map(c=>c.userId),subtaskTotal:ss.filter(c=>c.taskId===x.id).length,subtaskDone:ss.filter(c=>c.taskId===x.id&&c.status==='done').length,understanding:all.filter(r=>r.understandings.taskId===x.id&&r.understandings.taskVersion===x.version).sort((a,b)=>b.understandings.createdAt.localeCompare(a.understandings.createdAt))[0]?.understandings.status||'pending'})))
+   }
+   if(method==='POST'){
+    check(['low','medium','high'].includes(body.priority));check(Number.isFinite(Date.parse(body.dueAt)));const ids=collaboratorIds(body.collaboratorIds,body.assigneeId);
+    const task={id:uid(),teamId:t.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId:str(body.assigneeId,36),createdBy:user.id,dueAt:new Date(body.dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};
+    await db.transaction(async tx=>{await tx.select().from(teams).where(eq(teams.id,t.id)).for('update');const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,t.id));check([task.assigneeId,...ids].every(id=>ms.some(m=>m.id===id)),'ASSIGNEE_NOT_MEMBER');await tx.insert(tasks).values(task);if(ids.length)await tx.insert(taskCollaborators).values(ids.map(userId=>({taskId:task.id,userId}))) });return ok({...task,collaboratorIds:ids},201)
+   }
   }
   if(path.length===2&&method==='GET')return ok(t);
  }
  if(path[0]==='tasks'){
   const {task,team}=await taskAccess(path[1]);
-  if(path.length===2&&method==='GET'){return ok({...task,understandings:await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)),comments:await db.select({id:comments.id,authorId:comments.authorId,content:comments.content,createdAt:comments.createdAt,name:users.name}).from(comments).innerJoin(users,eq(comments.authorId,users.id)).where(eq(comments.taskId,task.id)).orderBy(comments.createdAt)})}
-  if(path.length===2&&method==='PATCH'){
-   check(canProgress(task,user.id,team.ownerId),'FORBIDDEN',403);const edit=canEdit(task,user.id,team.ownerId),update:any={};
-   for(const k of ['title','description','deliverable','assigneeId','dueAt','priority'])if(k in body){check(edit,'FORBIDDEN',403);update[k]=str(body[k],k==='description'?4000:1000)}
+  const collaborators=await db.select({id:taskCollaborators.userId}).from(taskCollaborators).where(eq(taskCollaborators.taskId,task.id));
+  const permissions=taskPermissions(task,user.id,team,collaborators.map(c=>c.id));
+  if(path.length===2&&method==='GET')return ok({...task,permissions,leaderId:team.leaderId,collaboratorIds:collaborators.map(c=>c.id).filter(id=>id!==task.assigneeId),subtasks:await db.select().from(subtasks).where(and(eq(subtasks.taskId,task.id),eq(subtasks.deleted,0))).orderBy(subtasks.createdAt,subtasks.id),understandings:await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)),comments:await db.select({id:comments.id,authorId:comments.authorId,content:comments.content,createdAt:comments.createdAt,name:users.name}).from(comments).innerJoin(users,eq(comments.authorId,users.id)).where(eq(comments.taskId,task.id)).orderBy(comments.createdAt)});
+  // Every task mutation locks the team before the parent task, sharing the same
+  // ordering as elections so role changes and participant assignments serialize.
+  async function mutate(fn:(tx:any,current:any,perms:ReturnType<typeof taskPermissions>,ids:string[])=>Promise<any>){return db.transaction(async tx=>{const [tm]=await tx.select().from(teams).where(eq(teams.id,team.id)).for('update');const [current]=await tx.select().from(tasks).where(eq(tasks.id,task.id)).for('update');check(current&&!current.deleted,'NOT_FOUND',404);const cs=await tx.select({id:taskCollaborators.userId}).from(taskCollaborators).where(eq(taskCollaborators.taskId,task.id));const ids=cs.map(c=>c.id);return fn(tx,current,taskPermissions(current,user.id,tm,ids),ids)})}
+  if(path.length===2&&method==='DELETE')return ok(await mutate(async(tx,current,p)=>{check(p.delete,'FORBIDDEN',403);await tx.update(tasks).set({deleted:1}).where(eq(tasks.id,current.id));return {id:current.id}}));
+  if(path.length===2&&method==='PATCH')return ok(await mutate(async(tx,current,p,ids)=>{
+   check(p.progress,'FORBIDDEN',403);const update:any={};
+   for(const k of ['title','description','deliverable','assigneeId','dueAt','priority'])if(k in body){check(p.edit,'FORBIDDEN',403);update[k]=str(body[k],k==='description'?4000:1000)}
    if(update.title)check(update.title.length<=160);if(update.priority)check(['low','medium','high'].includes(update.priority));
    if(update.dueAt){check(Number.isFinite(Date.parse(update.dueAt)));update.dueAt=new Date(update.dueAt).toISOString()}
-   if(update.assigneeId)check(await db.select().from(members).where(and(eq(members.teamId,team.id),eq(members.userId,update.assigneeId))).limit(1).then(rows=>rows[0]));
+   const primary=update.assigneeId||current.assigneeId;
+   if(update.assigneeId)check(await tx.select().from(members).where(and(eq(members.teamId,team.id),eq(members.userId,primary))).limit(1).then((rows:any[])=>rows[0]),'ASSIGNEE_NOT_MEMBER');
    if('status'in body){check(['todo','progress','done'].includes(body.status));update.status=body.status}
-   check(Object.keys(update).length);if(taskChanged(task,update))update.version=task.version+1;await db.update(tasks).set(update).where(eq(tasks.id,task.id));return ok({id:task.id});
-  }
+   const rosterChanged='collaboratorIds'in body;
+   const desired=rosterChanged?collaboratorIds(body.collaboratorIds,primary):ids.filter(id=>id!==primary);
+   if(rosterChanged){check(p.manage,'FORBIDDEN',403);const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,team.id));check(desired.every(id=>ms.some((m:any)=>m.id===id)),'ASSIGNEE_NOT_MEMBER')}
+   if(rosterChanged||update.assigneeId){const assigned=await tx.select({id:subtasks.assigneeId}).from(subtasks).where(and(eq(subtasks.taskId,task.id),eq(subtasks.deleted,0)));check(assigned.every((s:any)=>[primary,...desired].includes(s.id)),'SUBTASK_ASSIGNEE',409);await tx.delete(taskCollaborators).where(eq(taskCollaborators.taskId,task.id));if(desired.length)await tx.insert(taskCollaborators).values(desired.map(userId=>({taskId:task.id,userId})))}
+   check(Object.keys(update).length||rosterChanged);if(taskChanged(current,update))update.version=current.version+1;if(Object.keys(update).length)await tx.update(tasks).set(update).where(eq(tasks.id,task.id));return {id:task.id};
+  }));
+  if(path[2]==='subtasks')return ok(await mutate(async(tx,current,p,ids)=>{
+   const validAssignee=async(id:string)=>{check([current.assigneeId,...ids].includes(id),'SUBTASK_PARTICIPANT');check(await tx.select().from(members).where(and(eq(members.teamId,team.id),eq(members.userId,id))).limit(1).then((r:any[])=>r[0]),'ASSIGNEE_NOT_MEMBER')};
+   const dateValue=(v:unknown)=>{if(v==='')return '';check(typeof v==='string'&&Number.isFinite(Date.parse(v)));return new Date(v).toISOString()};
+   if(path.length===3&&method==='POST'){
+    check(p.manage,'FORBIDDEN',403);const existing=await tx.select({id:subtasks.id}).from(subtasks).where(and(eq(subtasks.taskId,task.id),eq(subtasks.deleted,0)));check(existing.length<100,'SUBTASK_LIMIT');const assigneeId=str(body.assigneeId,36);await validAssignee(assigneeId);
+    const row={id:uid(),taskId:task.id,title:str(body.title,160),description:typeof body.description==='string'?body.description.slice(0,2000):'',assigneeId,dueAt:dateValue(body.dueAt||''),status:'todo',deleted:0,createdAt:now()};await tx.insert(subtasks).values(row);await tx.update(tasks).set({version:current.version+1}).where(eq(tasks.id,task.id));return row;
+   }
+   const [sub]=await tx.select().from(subtasks).where(and(eq(subtasks.id,path[3]||''),eq(subtasks.taskId,task.id),eq(subtasks.deleted,0))).limit(1);check(sub,'NOT_FOUND',404);
+   if(method==='DELETE'&&path.length===4){check(p.manage,'FORBIDDEN',403);await tx.update(subtasks).set({deleted:1}).where(eq(subtasks.id,sub.id));await tx.update(tasks).set({version:current.version+1}).where(eq(tasks.id,task.id));return {id:sub.id}}
+   if(method==='PATCH'&&path.length===4){check(canUpdateSubtask(p.manage,sub.assigneeId,user.id,body),'FORBIDDEN',403);const update:any={};for(const k of ['title','description','assigneeId'])if(k in body){update[k]=k==='description'?(typeof body[k]==='string'&&body[k].length<=2000?body[k]:(()=>{throw new ApiError('VALIDATION')})()):str(body[k],k==='title'?160:36)}if(update.assigneeId)await validAssignee(update.assigneeId);if('dueAt'in body)update.dueAt=dateValue(body.dueAt);if('status'in body){check(['todo','progress','done'].includes(body.status));update.status=body.status}check(Object.keys(update).length);await tx.update(subtasks).set(update).where(eq(subtasks.id,sub.id));if(['title','description','assigneeId','dueAt'].some(k=>k in update&&update[k]!==sub[k]))await tx.update(tasks).set({version:current.version+1}).where(eq(tasks.id,task.id));return {id:sub.id}}
+   throw new ApiError('NOT_FOUND',404)
+  }),method==='POST'&&path.length===3?201:200);
   if(path[2]==='understandings'&&method==='POST'){check(task.assigneeId===user.id,'FORBIDDEN',403);const row={id:uid(),taskId:task.id,taskVersion:task.version,authorId:user.id,content:str(body.content,2000),status:'submitted',feedback:'',createdAt:now()};await db.insert(understandings).values(row);return ok(row,201)}
   if(path[2]==='comments'&&method==='POST'){const c={id:uid(),taskId:task.id,authorId:user.id,content:str(body.content,2000),createdAt:now()};await db.insert(comments).values(c);return ok(c,201)}
  }
  if(path[0]==='understandings'&&path[2]==='review'&&method==='PATCH'){
-  const u=await db.select().from(understandings).where(eq(understandings.id,path[1])).limit(1).then(rows=>rows[0]);check(u,'NOT_FOUND',404);const {task,team}=await taskAccess(u.taskId);check(canEdit(task,user.id,team.ownerId),'FORBIDDEN',403);check(u.taskVersion===task.version,'STALE_VERSION',409);check(u.status==='submitted','ALREADY_REVIEWED',409);
+  const u=await db.select().from(understandings).where(eq(understandings.id,path[1])).limit(1).then(rows=>rows[0]);check(u,'NOT_FOUND',404);const {task,team}=await taskAccess(u.taskId);check(canEdit(task,user.id,team.ownerId)||team.leaderId===user.id,'FORBIDDEN',403);check(u.taskVersion===task.version,'STALE_VERSION',409);check(u.status==='submitted','ALREADY_REVIEWED',409);
   const latest=await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)).limit(1).then(rows=>rows[0]);check(latest?.id===u.id,'STALE_VERSION',409);check(['confirmed','clarify'].includes(body.status));const feedback=body.status==='clarify'?str(body.feedback,2000):(typeof body.feedback==='string'?body.feedback.slice(0,2000):'');await db.update(understandings).set({status:body.status,feedback}).where(eq(understandings.id,u.id));return ok({id:u.id});
  }
  if(path[0]==='phrases'){
@@ -181,5 +219,5 @@ async function handle(req:Request){
  }
  throw new ApiError('NOT_FOUND',404);
 }
-async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof PracticeError)return Response.json({error:{code:e.code,detail:e.detail}},{status:400});if(e instanceof PhraseError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof TeamworkError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof PracticeError)return Response.json({error:{code:e.code,detail:e.detail}},{status:400});if(e instanceof PhraseError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
 export const GET=safe;export const POST=safe;export const PATCH=safe;export const DELETE=safe;
