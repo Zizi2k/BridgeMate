@@ -43,6 +43,13 @@
       "when": 1793175819413,
       "tag": "0005_abnormal_purifiers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1793256797382,
+      "tag": "0006_right_owl",
+      "breakpoints": true
     }
   ]
 }

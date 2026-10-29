@@ -132,3 +132,9 @@ Tasks retain one primary assignee and can include up to 50 additional collaborat
 Subtasks have a title, details, an assigned task participant, an optional deadline and a status. Add/edit/delete structural changes increment the parent requirements version; status updates do not. Reassign or delete a person's subtasks before removing them from the parent task. The primary assignee remains responsible for understanding confirmation.
 
 Migration `0005_abnormal_purifiers.sql` adds the nullable team leader, ballot table, task collaborators, subtasks and soft task deletion. It preserves existing tasks and team ownership. Elections and task writes use a common team-row lock so role changes and assignment changes serialize.
+
+## Team owner settings
+
+Only `teams.ownerId` (the account that created a team) can rename it, edit its description, delete it, or restore it. Elected leadership does not grant these permissions. Our team shows owner-only settings and a list of the user's own deleted teams.
+
+Deletion requires the current exact team name. It soft-deletes the team, blocks its invitation code, hides it from member lists, and denies access to tasks, leadership, team members and profiles shared only through that team. Restoring reactivates the same team, memberships, tasks, conversations and invitation code. Other teams and personal learning data are unchanged. Migration 0006 adds a default-zero deleted flag so existing teams stay active.
