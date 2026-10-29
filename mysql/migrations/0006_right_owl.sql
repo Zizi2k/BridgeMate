@@ -1,0 +1,1 @@
+ALTER TABLE `teams` ADD `deleted` int DEFAULT 0 NOT NULL;

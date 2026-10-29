@@ -59,6 +59,7 @@ CREATE TABLE `teams` (
 	`description` text NOT NULL,
 	`owner_id` varchar(36) NOT NULL,
 	`leader_id` varchar(36),
+	`deleted` int NOT NULL DEFAULT 0,
 	`invite` varchar(32) NOT NULL,
 	CONSTRAINT `teams_id` PRIMARY KEY(`id`),
 	CONSTRAINT `teams_invite_unique` UNIQUE(`invite`)

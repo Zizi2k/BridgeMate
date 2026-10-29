@@ -58,7 +58,7 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
  check(user,'UNAUTHORIZED',401);
- async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member,'FORBIDDEN',403);return team}
+ async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member&&!team.deleted,'FORBIDDEN',403);return team}
  async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task&&!task.deleted,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
  if(path[0]==='profiles'){
   const target=path[1]==='me'?user.id:path[1];check(typeof target==='string'&&target.length<=36,'NOT_FOUND',404);
@@ -71,8 +71,8 @@ async function handle(req:Request){
   }
   check(method==='GET','NOT_FOUND',404);
   if(target!==user.id){
-   const viewerTeams=await db.select({teamId:members.teamId}).from(members).where(eq(members.userId,user.id));
-   const targetTeams=await db.select({teamId:members.teamId}).from(members).where(eq(members.userId,target));
+   const viewerTeams=await db.select({teamId:members.teamId}).from(members).innerJoin(teams,eq(teams.id,members.teamId)).where(and(eq(members.userId,user.id),eq(teams.deleted,0)));
+   const targetTeams=await db.select({teamId:members.teamId}).from(members).innerJoin(teams,eq(teams.id,members.teamId)).where(and(eq(members.userId,target),eq(teams.deleted,0)));
    check(viewerTeams.some(a=>targetTeams.some(b=>a.teamId===b.teamId)),'FORBIDDEN',403);
   }
   const [owner]=await db.select({id:users.id,name:users.name}).from(users).where(eq(users.id,target)).limit(1);check(owner,'NOT_FOUND',404);
@@ -101,13 +101,24 @@ async function handle(req:Request){
   }
  }
  if(path[0]==='teams'){
-  if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,leaderId:teams.leaderId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(eq(members.userId,user.id));return ok(list)}
+  if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,leaderId:teams.leaderId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(and(eq(members.userId,user.id),eq(teams.deleted,0)));return ok(list)}
   if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.transaction(async tx=>{await tx.insert(teams).values(t);await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})});return ok(t,201)}
-  if(path[1]==='join'&&method==='POST'){const t=await db.select().from(teams).where(eq(teams.invite,str(body.invite,32).toUpperCase())).limit(1).then(rows=>rows[0]);check(t,'INVALID_INVITE',404);const m=await db.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);if(!m)await db.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return ok(t)}
+  if(path[1]==='join'&&method==='POST'){
+   const invite=str(body.invite,32).toUpperCase();const joined=await db.transaction(async tx=>{const [t]=await tx.select().from(teams).where(eq(teams.invite,invite)).for('update');check(t&&!t.deleted,'INVALID_INVITE',404);const [m]=await tx.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).limit(1);if(!m)await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return t});return ok(joined)
+  }
+  if(path[1]==='trash'&&method==='GET'&&path.length===2)return ok(await db.select({id:teams.id,name:teams.name,description:teams.description}).from(teams).where(and(eq(teams.ownerId,user.id),eq(teams.deleted,1))));
+  if((path.length===2&&(method==='PATCH'||method==='DELETE'))||(path.length===3&&path[2]==='restore'&&method==='POST')){
+   return ok(await db.transaction(async tx=>{const [tm]=await tx.select().from(teams).where(eq(teams.id,path[1])).for('update');check(tm&&tm.ownerId===user.id,'FORBIDDEN',403);
+    if(path[2]==='restore'){check(tm.deleted,'NOT_FOUND',404);await tx.update(teams).set({deleted:0}).where(eq(teams.id,tm.id));return {id:tm.id}}
+    check(!tm.deleted,'NOT_FOUND',404);
+    if(method==='DELETE'){check(body.confirmName===tm.name,'TEAM_CONFIRMATION');await tx.update(teams).set({deleted:1}).where(eq(teams.id,tm.id));return {id:tm.id}}
+    const update:{name?:string;description?:string}={};if('name'in body)update.name=str(body.name,80);if('description'in body){check(typeof body.description==='string'&&body.description.length<=500);update.description=body.description.trim()}check(Object.keys(update).length);await tx.update(teams).set(update).where(eq(teams.id,tm.id));return {...tm,...update}
+   }));
+  }
   const t=await teamAccess(path[1]);
   if(path[2]==='leadership'){
    if(method==='GET'){const ms=await db.select({id:members.userId}).from(members).where(eq(members.teamId,t.id)),votes=await db.select().from(leaderVotes).where(eq(leaderVotes.teamId,t.id));return ok({leaderId:t.leaderId,needed:majorityNeeded(ms.length),myVote:votes.find(v=>v.voterId===user.id)?.candidateId||'',counts:ms.map(m=>({id:m.id,votes:votes.filter(v=>v.candidateId===m.id).length}))})}
-   if(method==='POST'){const candidate=str(body.candidateId,36);return ok(await db.transaction(async tx=>{await tx.select().from(teams).where(eq(teams.id,t.id)).for('update');const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,t.id));check(ms.some(m=>m.id===candidate),'CANDIDATE_NOT_MEMBER');await tx.insert(leaderVotes).values({teamId:t.id,voterId:user.id,candidateId:candidate}).onDuplicateKeyUpdate({set:{candidateId:candidate}});const votes=await tx.select().from(leaderVotes).where(eq(leaderVotes.teamId,t.id));const winner=electionWinner(votes,ms.map(m=>m.id));if(winner){await tx.update(teams).set({leaderId:winner}).where(eq(teams.id,t.id));await tx.delete(leaderVotes).where(eq(leaderVotes.teamId,t.id))}return {elected:!!winner,leaderId:winner}}))}
+   if(method==='POST'){const candidate=str(body.candidateId,36);return ok(await db.transaction(async tx=>{const [activeTeam]=await tx.select().from(teams).where(eq(teams.id,t.id)).for('update');check(activeTeam&&!activeTeam.deleted,'FORBIDDEN',403);const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,t.id));check(ms.some(m=>m.id===candidate),'CANDIDATE_NOT_MEMBER');await tx.insert(leaderVotes).values({teamId:t.id,voterId:user.id,candidateId:candidate}).onDuplicateKeyUpdate({set:{candidateId:candidate}});const votes=await tx.select().from(leaderVotes).where(eq(leaderVotes.teamId,t.id));const winner=electionWinner(votes,ms.map(m=>m.id));if(winner){await tx.update(teams).set({leaderId:winner}).where(eq(teams.id,t.id));await tx.delete(leaderVotes).where(eq(leaderVotes.teamId,t.id))}return {elected:!!winner,leaderId:winner}}))}
   }
   if(path[2]==='members'&&method==='GET')return ok(await db.select({id:users.id,name:users.name,role:members.role,demo:users.demo,avatar:profiles.avatar,slogan:profiles.slogan}).from(members).innerJoin(users,eq(members.userId,users.id)).leftJoin(profiles,eq(profiles.userId,users.id)).where(eq(members.teamId,t.id)));
   if(path[2]==='tasks'){
@@ -121,7 +132,7 @@ async function handle(req:Request){
    if(method==='POST'){
     check(['low','medium','high'].includes(body.priority));check(Number.isFinite(Date.parse(body.dueAt)));const ids=collaboratorIds(body.collaboratorIds,body.assigneeId);
     const task={id:uid(),teamId:t.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId:str(body.assigneeId,36),createdBy:user.id,dueAt:new Date(body.dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};
-    await db.transaction(async tx=>{await tx.select().from(teams).where(eq(teams.id,t.id)).for('update');const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,t.id));check([task.assigneeId,...ids].every(id=>ms.some(m=>m.id===id)),'ASSIGNEE_NOT_MEMBER');await tx.insert(tasks).values(task);if(ids.length)await tx.insert(taskCollaborators).values(ids.map(userId=>({taskId:task.id,userId}))) });return ok({...task,collaboratorIds:ids},201)
+    await db.transaction(async tx=>{const [activeTeam]=await tx.select().from(teams).where(eq(teams.id,t.id)).for('update');check(activeTeam&&!activeTeam.deleted,'FORBIDDEN',403);const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,t.id));check([task.assigneeId,...ids].every(id=>ms.some(m=>m.id===id)),'ASSIGNEE_NOT_MEMBER');await tx.insert(tasks).values(task);if(ids.length)await tx.insert(taskCollaborators).values(ids.map(userId=>({taskId:task.id,userId}))) });return ok({...task,collaboratorIds:ids},201)
    }
   }
   if(path.length===2&&method==='GET')return ok(t);
@@ -133,7 +144,7 @@ async function handle(req:Request){
   if(path.length===2&&method==='GET')return ok({...task,permissions,leaderId:team.leaderId,collaboratorIds:collaborators.map(c=>c.id).filter(id=>id!==task.assigneeId),subtasks:await db.select().from(subtasks).where(and(eq(subtasks.taskId,task.id),eq(subtasks.deleted,0))).orderBy(subtasks.createdAt,subtasks.id),understandings:await db.select().from(understandings).where(eq(understandings.taskId,task.id)).orderBy(desc(understandings.createdAt)),comments:await db.select({id:comments.id,authorId:comments.authorId,content:comments.content,createdAt:comments.createdAt,name:users.name}).from(comments).innerJoin(users,eq(comments.authorId,users.id)).where(eq(comments.taskId,task.id)).orderBy(comments.createdAt)});
   // Every task mutation locks the team before the parent task, sharing the same
   // ordering as elections so role changes and participant assignments serialize.
-  async function mutate(fn:(tx:any,current:any,perms:ReturnType<typeof taskPermissions>,ids:string[])=>Promise<any>){return db.transaction(async tx=>{const [tm]=await tx.select().from(teams).where(eq(teams.id,team.id)).for('update');const [current]=await tx.select().from(tasks).where(eq(tasks.id,task.id)).for('update');check(current&&!current.deleted,'NOT_FOUND',404);const cs=await tx.select({id:taskCollaborators.userId}).from(taskCollaborators).where(eq(taskCollaborators.taskId,task.id));const ids=cs.map(c=>c.id);return fn(tx,current,taskPermissions(current,user.id,tm,ids),ids)})}
+  async function mutate(fn:(tx:any,current:any,perms:ReturnType<typeof taskPermissions>,ids:string[])=>Promise<any>){return db.transaction(async tx=>{const [tm]=await tx.select().from(teams).where(eq(teams.id,team.id)).for('update');check(tm&&!tm.deleted,'FORBIDDEN',403);const [current]=await tx.select().from(tasks).where(eq(tasks.id,task.id)).for('update');check(current&&!current.deleted,'NOT_FOUND',404);const cs=await tx.select({id:taskCollaborators.userId}).from(taskCollaborators).where(eq(taskCollaborators.taskId,task.id));const ids=cs.map(c=>c.id);return fn(tx,current,taskPermissions(current,user.id,tm,ids),ids)})}
   if(path.length===2&&method==='DELETE')return ok(await mutate(async(tx,current,p)=>{check(p.delete,'FORBIDDEN',403);await tx.update(tasks).set({deleted:1}).where(eq(tasks.id,current.id));return {id:current.id}}));
   if(path.length===2&&method==='PATCH')return ok(await mutate(async(tx,current,p,ids)=>{
    check(p.progress,'FORBIDDEN',403);const update:any={};
