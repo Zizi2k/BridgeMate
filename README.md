@@ -138,3 +138,11 @@ Migration `0005_abnormal_purifiers.sql` adds the nullable team leader, ballot ta
 Only `teams.ownerId` (the account that created a team) can rename it, edit its description, delete it, or restore it. Elected leadership does not grant these permissions. Our team shows owner-only settings and a list of the user's own deleted teams.
 
 Deletion requires the current exact team name. It soft-deletes the team, blocks its invitation code, hides it from member lists, and denies access to tasks, leadership, team members and profiles shared only through that team. Restoring reactivates the same team, memberships, tasks, conversations and invitation code. Other teams and personal learning data are unchanged. Migration 0006 adds a default-zero deleted flag so existing teams stay active.
+
+## Team ranking
+
+Each task's first completion creates one immutable snapshot of its primary assignee and collaborators, in the same transaction as the status update. Every distinct participant in that snapshot earns 10 points in that team. Task creators/leaders receive points only if they participate. Subtasks do not earn separate points. The task ID primary key plus existing parent/team locks prevent concurrent requests, repeated completion or reopening from awarding twice. Later assignment changes and soft deletion do not move or remove earned points.
+
+The team-only leaderboard appears in Our team and as an expandable panel in Task board. Positions use competition ranking: equal points share a position (1, 1, 3). Positive-point places 1–4 are Diamond, Gold, Platinum and Ruby respectively, as requested; zero points and places below 4 have no badge. Scores are private to team members and separate between teams. Deleting/restoring a team hides/restores the same ranking.
+
+Migration 0007 creates completion snapshots and backfills existing completed, non-deleted tasks in active teams using their current participant rosters. Demo seed tasks also record their completed-work snapshot. `node tests/ranking.integration.mjs` exercises idempotency, participant awards, rank order, permissions and team isolation against BRIDGEMATE_TEST_URL.

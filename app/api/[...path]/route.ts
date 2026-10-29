@@ -1,3 +1,4 @@
+import {rankTeam,completionRecipients,POINTS_PER_TASK} from '../../../lib/ranking';
 import {collaboratorIds,majorityNeeded,electionWinner,taskPermissions,canUpdateSubtask,TeamworkError} from '../../../lib/teamwork';
 import {createHash} from 'node:crypto';
 import {composePractice,validateQuestion,PracticeError} from '../../../lib/practice';
@@ -6,7 +7,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -53,7 +54,7 @@ async function handle(req:Request){
     {id:uid(),teamId:t.id,title:'Review our communication phrasebook',description:'Review the English and Vietnamese phrases. Make sure the tone is clear and respectful.',deliverable:'30 reviewed bilingual phrases',assigneeId:people[1].id,createdBy:id,dueAt:due(4),priority:'medium',status:'progress',version:1,createdAt:now()},
     {id:uid(),teamId:t.id,title:'Prepare the project poster',description:'Use our sage green style. Explain the problem, solution and understanding confirmation flow.',deliverable:'An editable poster and a PDF export',assigneeId:people[3].id,createdBy:id,dueAt:due(6),priority:'medium',status:'todo',version:1,createdAt:now()},
     {id:uid(),teamId:t.id,title:'Agree on our shared project goals',description:'Discuss the core features and divide responsibilities across six members.',deliverable:'An agreed scope and team assignment',assigneeId:people[4].id,createdBy:id,dueAt:due(-1),priority:'low',status:'done',version:1,createdAt:now()}
-   ]);});return session(u);
+   ]);const completed=await tx.select().from(tasks).where(and(eq(tasks.teamId,t.id),eq(tasks.status,'done')));if(completed.length)await tx.insert(taskCompletions).values(completed.map(task=>({taskId:task.id,teamId:t.id,recipients:JSON.stringify([task.assigneeId]),completedAt:now()})));});return session(u);
   }
   throw new ApiError('NOT_FOUND',404);
  }
@@ -116,6 +117,10 @@ async function handle(req:Request){
    }));
   }
   const t=await teamAccess(path[1]);
+  if(path[2]==='ranking'&&path.length===3&&method==='GET'){
+   const [people,completions]=await Promise.all([db.select({id:users.id,name:users.name,avatar:profiles.avatar}).from(members).innerJoin(users,eq(members.userId,users.id)).leftJoin(profiles,eq(profiles.userId,users.id)).where(eq(members.teamId,t.id)),db.select({recipients:taskCompletions.recipients}).from(taskCompletions).where(eq(taskCompletions.teamId,t.id))]);
+   return ok({pointsPerTask:POINTS_PER_TASK,rows:rankTeam(people,completions)})
+  }
   if(path[2]==='leadership'){
    if(method==='GET'){const ms=await db.select({id:members.userId}).from(members).where(eq(members.teamId,t.id)),votes=await db.select().from(leaderVotes).where(eq(leaderVotes.teamId,t.id));return ok({leaderId:t.leaderId,needed:majorityNeeded(ms.length),myVote:votes.find(v=>v.voterId===user.id)?.candidateId||'',counts:ms.map(m=>({id:m.id,votes:votes.filter(v=>v.candidateId===m.id).length}))})}
    if(method==='POST'){const candidate=str(body.candidateId,36);return ok(await db.transaction(async tx=>{const [activeTeam]=await tx.select().from(teams).where(eq(teams.id,t.id)).for('update');check(activeTeam&&!activeTeam.deleted,'FORBIDDEN',403);const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,t.id));check(ms.some(m=>m.id===candidate),'CANDIDATE_NOT_MEMBER');await tx.insert(leaderVotes).values({teamId:t.id,voterId:user.id,candidateId:candidate}).onDuplicateKeyUpdate({set:{candidateId:candidate}});const votes=await tx.select().from(leaderVotes).where(eq(leaderVotes.teamId,t.id));const winner=electionWinner(votes,ms.map(m=>m.id));if(winner){await tx.update(teams).set({leaderId:winner}).where(eq(teams.id,t.id));await tx.delete(leaderVotes).where(eq(leaderVotes.teamId,t.id))}return {elected:!!winner,leaderId:winner}}))}
@@ -158,7 +163,11 @@ async function handle(req:Request){
    const desired=rosterChanged?collaboratorIds(body.collaboratorIds,primary):ids.filter(id=>id!==primary);
    if(rosterChanged){check(p.manage,'FORBIDDEN',403);const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,team.id));check(desired.every(id=>ms.some((m:any)=>m.id===id)),'ASSIGNEE_NOT_MEMBER')}
    if(rosterChanged||update.assigneeId){const assigned=await tx.select({id:subtasks.assigneeId}).from(subtasks).where(and(eq(subtasks.taskId,task.id),eq(subtasks.deleted,0)));check(assigned.every((s:any)=>[primary,...desired].includes(s.id)),'SUBTASK_ASSIGNEE',409);await tx.delete(taskCollaborators).where(eq(taskCollaborators.taskId,task.id));if(desired.length)await tx.insert(taskCollaborators).values(desired.map(userId=>({taskId:task.id,userId})))}
-   check(Object.keys(update).length||rosterChanged);if(taskChanged(current,update))update.version=current.version+1;if(Object.keys(update).length)await tx.update(tasks).set(update).where(eq(tasks.id,task.id));return {id:task.id};
+   check(Object.keys(update).length||rosterChanged);if(taskChanged(current,update))update.version=current.version+1;if(Object.keys(update).length)await tx.update(tasks).set(update).where(eq(tasks.id,task.id));
+   // The parent-task lock serializes completion with roster edits. One immutable
+   // snapshot per task prevents retries, reopening and later additions earning twice.
+   if(update.status==='done')await tx.insert(taskCompletions).values({taskId:task.id,teamId:team.id,recipients:JSON.stringify(completionRecipients(primary,desired)),completedAt:now()}).onDuplicateKeyUpdate({set:{taskId:sql`${taskCompletions.taskId}`}});
+   return {id:task.id};
   }));
   if(path[2]==='subtasks')return ok(await mutate(async(tx,current,p,ids)=>{
    const validAssignee=async(id:string)=>{check([current.assigneeId,...ids].includes(id),'SUBTASK_PARTICIPANT');check(await tx.select().from(members).where(and(eq(members.teamId,team.id),eq(members.userId,id))).limit(1).then((r:any[])=>r[0]),'ASSIGNEE_NOT_MEMBER')};

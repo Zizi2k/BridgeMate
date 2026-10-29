@@ -50,6 +50,13 @@
       "when": 1793256797382,
       "tag": "0006_right_owl",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1793289820324,
+      "tag": "0007_stale_kree",
+      "breakpoints": true
     }
   ]
 }

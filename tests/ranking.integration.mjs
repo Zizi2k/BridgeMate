@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+const base=process.env.BRIDGEMATE_TEST_URL||'http://localhost:3000/api/';
+function client(){let cookie='';return async(path,method='GET',body,expected=200)=>{const r=await fetch(base+path,{method,signal:AbortSignal.timeout(45000),headers:{...(cookie?{Cookie:cookie}:{}),...(method==='GET'?{}:{'Content-Type':'application/json'})},...(body?{body:JSON.stringify(body)}:{})});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const j=await r.json();assert.equal(r.status,expected,`${method} ${path}: ${JSON.stringify(j)}`);return j.data}}
+const tag=crypto.randomUUID(),clients=Array.from({length:6},client),people=[];
+for(let i=0;i<clients.length;i++)people.push(await clients[i]('auth/register','POST',{name:'Ranking test '+String.fromCharCode(65+i),email:`rank-${i}-${tag}@example.test`,password:'Integration123!'}));
+const [a,b,c,d,e,outside]=clients,[ua,ub,uc,ud,ue]=people;
+const team=await a('teams','POST',{name:'Ranking integration',description:'Isolated scoring test'},201);
+for(const member of [b,c,d,e])await member('teams/join','POST',{invite:team.invite});
+const board=()=>a(`teams/${team.id}/ranking`),score=async id=>(await board()).rows.find(p=>p.id===id).points;
+assert.ok((await board()).rows.every(p=>p.points===0&&p.rank===null));await outside(`teams/${team.id}/ranking`,'GET',undefined,403);
+const taskInput={title:'Award team participants',description:'Everyone contributes',deliverable:'A result',assigneeId:ua.id,priority:'medium',dueAt:new Date(Date.now()+86400000).toISOString()};
+const t1=await a(`teams/${team.id}/tasks`,'POST',{...taskInput,collaboratorIds:[ub.id,uc.id,ud.id,ua.id,ub.id]},201);
+await Promise.all([b(`tasks/${t1.id}`,'PATCH',{status:'done'}),a(`tasks/${t1.id}`,'PATCH',{status:'done'}),c(`tasks/${t1.id}`,'PATCH',{status:'done'})]);
+assert.equal(await score(ua.id),10);assert.equal(await score(ub.id),10);assert.equal(await score(uc.id),10);assert.equal(await score(ud.id),10);assert.equal(await score(ue.id),0);
+assert.ok((await board()).rows.filter(p=>p.points===10).every(p=>p.position===1&&p.rank==='diamond'));
+await a(`tasks/${t1.id}`,'PATCH',{status:'progress'});await a(`tasks/${t1.id}`,'PATCH',{status:'done'});assert.equal(await score(ua.id),10);
+await a(`tasks/${t1.id}`,'PATCH',{assigneeId:ue.id,collaboratorIds:[]});await a(`tasks/${t1.id}`,'PATCH',{status:'done'});assert.equal(await score(ue.id),0);assert.equal(await score(ua.id),10);
+await a(`tasks/${t1.id}`,'DELETE',{});assert.equal(await score(ua.id),10);
+console.log('PASS: all participants credited once, concurrent/repeated completion idempotent, equal scores tied, later roster changes do not move points, task deletion preserves earned points.');
+const t2=await a(`teams/${team.id}/tasks`,'POST',{...taskInput,collaboratorIds:[ub.id,uc.id]},201);
+const sub=await a(`tasks/${t2.id}/subtasks`,'POST',{title:'A small step',assigneeId:ub.id},201);await b(`tasks/${t2.id}/subtasks/${sub.id}`,'PATCH',{status:'done'});assert.equal(await score(ub.id),10);
+await d(`tasks/${t2.id}`,'PATCH',{status:'done'},403);await outside(`tasks/${t2.id}`,'PATCH',{status:'done'},403);await b(`tasks/${t2.id}`,'PATCH',{status:'done'});
+const t3=await a(`teams/${team.id}/tasks`,'POST',{...taskInput,collaboratorIds:[ub.id]},201);await a(`tasks/${t3.id}`,'PATCH',{status:'done'});
+const t4=await a(`teams/${team.id}/tasks`,'POST',taskInput,201);await a(`tasks/${t4.id}`,'PATCH',{status:'done'});
+const rows=(await board()).rows;assert.deepEqual(rows.map(p=>[p.points,p.rank]),[[40,'diamond'],[30,'gold'],[20,'platinum'],[10,'ruby'],[0,null]]);
+const other=await a('teams','POST',{name:'Separate ranking',description:''},201);assert.equal((await a(`teams/${other.id}/ranking`)).rows[0].points,0);
+await a(`teams/${team.id}`,'DELETE',{confirmName:team.name});await b(`teams/${team.id}/ranking`,'GET',undefined,403);await a(`teams/${team.id}/restore`,'POST',{});assert.equal(await score(ua.id),40);
+console.log('PASS: exact Diamond/Gold/Platinum/Ruby order, no separate subtask awards, authorization, team isolation and ranking persistence after restoring a team.');
