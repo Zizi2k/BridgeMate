@@ -146,3 +146,7 @@ Each task's first completion creates one immutable snapshot of its primary assig
 The team-only leaderboard appears in Our team and as an expandable panel in Task board. Positions use competition ranking: equal points share a position (1, 1, 3). Positive-point places 1–4 are Diamond, Gold, Platinum and Ruby respectively, as requested; zero points and places below 4 have no badge. Scores are private to team members and separate between teams. Deleting/restoring a team hides/restores the same ranking.
 
 Migration 0007 creates completion snapshots and backfills existing completed, non-deleted tasks in active teams using their current participant rosters. Demo seed tasks also record their completed-work snapshot. `node tests/ranking.integration.mjs` exercises idempotency, participant awards, rank order, permissions and team isolation against BRIDGEMATE_TEST_URL.
+
+## Brand assets
+
+The supplied BridgeMate logo is used in the public header, workspace sidebar, login/register panel and loading screen. The PNG retains the navy rounded tile and uses transparent pixels outside its silhouette. `public/brand/bridgemate-logo-4k.png` is the 4096 × 4096 master, while the 512 px web image and 64/180 px browser and Apple icons keep page downloads small.
