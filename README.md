@@ -150,3 +150,7 @@ Migration 0007 creates completion snapshots and backfills existing completed, no
 ## Brand assets
 
 The supplied BridgeMate logo is used in the public header, workspace sidebar, login/register panel and loading screen. The PNG retains the navy rounded tile and uses transparent pixels outside its silhouette. `public/brand/bridgemate-logo-4k.png` is the 4096 × 4096 master, while the 512 px web image and 64/180 px browser and Apple icons keep page downloads small.
+
+## Trạm liên kết
+
+Kho website cá nhân và lịch làm việc theo ngày nằm trong [apps/tram-lien-ket](apps/tram-lien-ket/README.md). Ứng dụng có cấu hình triển khai riêng cho frontend Vercel, API Render và PostgreSQL Railway.
