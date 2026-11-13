@@ -1,3 +1,4 @@
+import {personalData,validDay} from '../../../lib/personal-workspace';
 import {rankTeam,completionRecipients,POINTS_PER_TASK} from '../../../lib/ranking';
 import {collaboratorIds,majorityNeeded,electionWinner,taskPermissions,canUpdateSubtask,TeamworkError} from '../../../lib/teamwork';
 import {createHash} from 'node:crypto';
@@ -7,7 +8,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -30,7 +31,7 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<(path[0]==='profiles'&&method==='PATCH'?180000:path[0]==='quiz'&&path[1]==='import'?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
+ check(JSON.stringify(body).length<(path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:path[0]==='quiz'&&path[1]==='import'?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
  async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);return {...publicUser(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
@@ -59,6 +60,38 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
  check(user,'UNAUTHORIZED',401);
+ if(path[0]==='personal'){
+  const [,kind,entryId,...extra]=path;
+  check((kind==='links'||kind==='tasks')&&extra.length===0,'NOT_FOUND',404);
+  const owned=and(eq(personalEntries.userId,user.id),eq(personalEntries.kind,kind));
+  if(method==='GET'&&!entryId){
+   const day=url.searchParams.get('date')||'';
+   if(kind==='tasks')check(validDay(day));
+   const where=kind==='tasks'?and(owned,sql`JSON_UNQUOTE(JSON_EXTRACT(${personalEntries.data}, '$.date')) = ${day}`):owned;
+   const rows=await db.select({id:personalEntries.id,data:personalEntries.data}).from(personalEntries).where(where);
+   return ok(rows.map(row=>({...row.data as object,id:row.id})));
+  }
+  if(method==='POST'&&!entryId){
+   const data=personalData(kind,body);check(data);
+   const id=uid();await db.insert(personalEntries).values({id,userId:user.id,kind,data});
+   return ok({...data,id},201);
+  }
+  if(entryId&&(method==='PATCH'||method==='DELETE')){
+   check(/^[0-9a-f-]{36}$/.test(entryId),'NOT_FOUND',404);
+   const target=and(owned,eq(personalEntries.id,entryId));
+   if(method==='DELETE'){
+    const [result]=await db.delete(personalEntries).where(target);
+    check(result.affectedRows,'NOT_FOUND',404);
+    return ok(null);
+   }
+   const data=personalData(kind,body);check(data);
+   const [result]=await db.update(personalEntries).set({data}).where(target);
+   check(result.affectedRows,'NOT_FOUND',404);
+   return ok({...data,id:entryId});
+  }
+  throw new ApiError('NOT_FOUND',404);
+ }
+
  async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member&&!team.deleted,'FORBIDDEN',403);return team}
  async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task&&!task.deleted,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
  if(path[0]==='profiles'){

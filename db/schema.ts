@@ -1,4 +1,4 @@
-import {mysqlTable,varchar,text,mediumtext,int,bigint,uniqueIndex,index,primaryKey} from 'drizzle-orm/mysql-core';
+import {mysqlTable,varchar,text,mediumtext,int,bigint,uniqueIndex,index,primaryKey,json} from 'drizzle-orm/mysql-core';
 const id=(name='id')=>varchar(name,{length:36});
 const iso=(name:string)=>varchar(name,{length:32});
 export const users=mysqlTable('users',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),email:varchar('email',{length:254}).notNull().unique(),password:varchar('password',{length:255}).notNull(),demo:int('demo').notNull().default(0)});
@@ -22,3 +22,10 @@ export const taskCollaborators=mysqlTable('task_collaborators',{taskId:id('task_
 export const subtasks=mysqlTable('subtasks',{id:id().primaryKey(),taskId:id('task_id').notNull().references(()=>tasks.id,{onDelete:'cascade'}),title:varchar('title',{length:160}).notNull(),description:text('description').notNull(),assigneeId:id('assignee_id').notNull().references(()=>users.id),dueAt:iso('due_at').notNull().default(''),status:varchar('status',{length:16}).notNull().default('todo'),deleted:int('deleted').notNull().default(0),createdAt:iso('created_at').notNull()},t=>[index('subtasks_task_index').on(t.taskId)]);
 
 export const taskCompletions=mysqlTable('task_completions',{taskId:id('task_id').primaryKey().references(()=>tasks.id,{onDelete:'cascade'}),teamId:id('team_id').notNull().references(()=>teams.id,{onDelete:'cascade'}),recipients:text('recipients').notNull(),completedAt:iso('completed_at').notNull()},t=>[index('task_completions_team_index').on(t.teamId)]);
+
+export const personalEntries=mysqlTable('personal_entries',{
+ id:id().primaryKey(),
+ userId:id('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),
+ kind:varchar('kind',{length:8}).notNull(),
+ data:json('data').notNull(),
+},t=>[index('personal_entries_owner_kind').on(t.userId,t.kind)]);
