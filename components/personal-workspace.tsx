@@ -10,6 +10,11 @@ const today=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Ho_Chi_Minh'}).f
 const fold=(value:string)=>value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d');
 const newEntry=(date:string):Entry=>({id:'',title:'',note:'',date,start:'09:00',end:'10:00'});
 
+function websiteHost(url?:string){
+ if(!url)return '';
+ try{return new URL(url).hostname.replace(/^www\./,'')}catch{return ''}
+}
+
 async function cover(file:File){
  if(file.size>12*1024*1024||!['image/jpeg','image/png','image/webp','image/gif'].includes(file.type))throw Error('IMAGE');
  const bitmap=await createImageBitmap(file).catch(()=>{throw Error('IMAGE')});
@@ -127,14 +132,21 @@ export default function PersonalWorkspace({kind,lang}:{kind:Kind;lang:string}){
    <div className={styles.toolbar}><button className="btn primary" disabled={busy}>{t('Save','Lưu')}</button><button className="btn" type="button" disabled={busy} onClick={()=>{setEdit(null);setError('')}}>{t('Cancel','Hủy')}</button></div>
   </form>}
   {loading?<div className="empty" role="status">{t('Loading…','Đang tải…')}</div>:visible.length?
-   <div className={links?styles.grid:styles.list}>{visible.map(item=><article className={styles.card} key={item.id}>
-    {links?<><a className={styles.cover} href={item.url} target="_blank" rel="noopener noreferrer" aria-label={item.title}>
-     {item.image?<img src={item.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={e=>{e.currentTarget.hidden=true}}/>:<Link2 size={25}/>}</a>
-     <h3><a href={item.url} target="_blank" rel="noopener noreferrer">{item.title} <ExternalLink size={14}/></a></h3>{item.category&&<small>{item.category}</small>}</>:
+   <div className={links?styles.grid:styles.list}>{visible.map(item=><article className={links?styles.linkCard:styles.card} key={item.id}>
+    {links?<><a className={styles.cover} href={item.url} target="_blank" rel="noopener noreferrer" aria-label={t('Open website: ','Mở website: ')+item.title}>
+     <span className={styles.coverPlaceholder} aria-hidden="true"><Link2 size={28}/></span>
+     {item.image&&<img key={item.image} src={item.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={e=>{e.currentTarget.hidden=true}}/>}
+     <span className={styles.openIcon} aria-hidden="true"><ExternalLink size={16}/></span>
+    </a>
+    <div className={styles.linkDetails}>
+     {item.category&&<span className={styles.category}>{item.category}</span>}
+     <h3><a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a></h3>
+     <span className={styles.domain}>{websiteHost(item.url)}</span>
+    </div></>:
      <><div className={styles.toolbar}><CalendarDays size={17}/><span>{item.start} – {item.end}</span></div><h3>{item.title}</h3>
      <label className={styles.check}><input type="checkbox" checked={!!item.done} disabled={busy||!!edit} onChange={e=>{const done=e.currentTarget.checked;void perform(async()=>put(await request(kind+'/'+item.id,'PATCH',{...item,done})))}}/>{t('Completed','Hoàn thành')}</label></>}
-    {item.note&&<p>{item.note}</p>}
-    <div className={styles.toolbar}><button className="btn" disabled={busy||!!edit} onClick={()=>{setError('');setEdit(item)}}>{t('Edit','Sửa')}</button>
+    {item.note&&<p className={links?styles.linkNote:undefined}>{item.note}</p>}
+    <div className={links?styles.linkActions:styles.toolbar}><button className="btn" disabled={busy||!!edit} onClick={()=>{setError('');setEdit(item)}}>{t('Edit','Sửa')}</button>
      <button className="btn" disabled={busy||!!edit} onClick={()=>{if(window.confirm(t('Delete this item?','Xóa mục này?')))void perform(async()=>{
       await request(kind+'/'+item.id,'DELETE',{});setRows(current=>current.filter(row=>row.id!==item.id));
      })}}>{t('Delete','Xóa')}</button></div>
