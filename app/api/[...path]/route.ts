@@ -1,3 +1,4 @@
+import {vietQrBanks} from '../../../lib/vietqr-banks';
 import {isModule,printDefaults,validatePrintTemplate,type Module} from '../../../lib/module-access';
 import {payrollData} from '../../../lib/payroll';
 import {accountRole} from "../../../lib/account-role";
@@ -83,6 +84,30 @@ async function handle(req:Request){
    });
    return ok(null);
   }
+ }
+ if(path[0]==='payroll-bank-lookup'&&path.length===1&&method==='POST'){
+  check(!user.demo&&(await approved('payroll-personal')||await approved('payroll-team')),'FORBIDDEN',403);
+  check(typeof body.bin==='string'&&vietQrBanks.some(bank=>bank.bin===body.bin&&bank.lookupSupported),'BANK_LOOKUP_UNSUPPORTED');
+  check(typeof body.accountNumber==='string'&&/^\d{4,19}$/.test(body.accountNumber));
+  const clientId=process.env.VIETQR_CLIENT_ID, apiKey=process.env.VIETQR_API_KEY;
+  check(clientId&&apiKey,'BANK_LOOKUP_UNCONFIGURED',503);
+  const minute=Math.floor(Date.now()/60000), id=user.id+':bank:'+minute;
+  await db.transaction(async tx=>{
+   await tx.insert(aiUsage).values({id,userId:user.id,requests:1,expires:(minute+2)*60000})
+    .onDuplicateKeyUpdate({set:{requests:sql`${aiUsage.requests}+1`}});
+   const [counter]=await tx.select().from(aiUsage).where(eq(aiUsage.id,id)).for('update');
+   check(counter.requests<=8,'BANK_LOOKUP_RATE_LIMIT',429);
+  });
+  let response:Response;
+  try{response=await fetch('https://api.vietqr.io/v2/lookup',{
+   method:'POST',headers:{'Content-Type':'application/json','x-client-id':clientId,'x-api-key':apiKey},
+   body:JSON.stringify({bin:Number(body.bin),accountNumber:body.accountNumber}),signal:AbortSignal.timeout(8000),cache:'no-store',
+  });}catch{throw new ApiError('BANK_LOOKUP_UNAVAILABLE',502)}
+  check(response.ok,'BANK_LOOKUP_UNAVAILABLE',502);
+  const result=await response.json().catch(()=>null);
+  const name=result?.code==='00'&&typeof result.data?.accountName==='string'?result.data.accountName.trim():'';
+  check(name&&name.length<=180,'BANK_LOOKUP_UNCONFIRMED',422);
+  return ok({name});
  }
  if(path[0]==='payroll-template'&&path.length===1){
   if(method==='GET'){

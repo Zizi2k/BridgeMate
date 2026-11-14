@@ -40,6 +40,13 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
  const total=entry.total+adjustments.allowance;
  const remaining=entry.balance+adjustments.allowance-adjustments.insurance-adjustments.tax;
  const [bank,setBank]=useState('');
+ const [bankQuery,setBankQuery]=useState('');
+ const [searchOpen,setSearchOpen]=useState(false);
+ const [owner,setOwner]=useState<{key:string;name:string}|null>(null);
+ const [lookup,setLookup]=useState<{key:string;message:string}|null>(null);
+ const [lookupBusy,setLookupBusy]=useState(false);
+ const fold=(text:string)=>text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d');
+ const matchedBanks=vietQrBanks.filter(item=>fold([item.name,item.fullName,item.code,item.bin].join(' ')).includes(fold(bankQuery.trim())));
  const [otherBin,setOtherBin]=useState('');
  const [account,setAccount]=useState('');
  const [generated,setGenerated]=useState<{payload:string;image:string}|null>(null);
@@ -51,6 +58,24 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
  const selectedBank=vietQrBanks.find(item=>item.bin===bin);
  const payload=selectedBank?.transferSupported===false?null:payrollQr(bin,receiverAccount,amount,reference);
  const qr=generated?.payload===payload&&payload?generated.image:'';
+ const lookupKey=bin+':'+receiverAccount;
+ const ownerName=owner?.key===lookupKey?owner.name:'';
+ async function findOwner(){
+  if(!selectedBank?.lookupSupported||!/^\d{4,19}$/.test(receiverAccount))return;
+  setLookupBusy(true);setLookup(null);setOwner(null);
+  try{
+   const response=await fetch('/api/payroll-bank-lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bin,accountNumber:receiverAccount})});
+   const data=await response.json();
+   if(!response.ok){
+    const code=data.error?.code;
+    throw Error(code==='BANK_LOOKUP_UNCONFIGURED'?'Chưa cấu hình dịch vụ tra cứu VietQR.':
+     code==='BANK_LOOKUP_RATE_LIMIT'?'Bạn đã tra cứu nhiều lần. Thử lại sau một phút.':
+     code==='BANK_LOOKUP_UNCONFIRMED'?'VietQR chưa xác nhận được tên chủ tài khoản.':'Tra cứu chưa thành công. Vui lòng thử lại.');
+   }
+   setOwner({key:lookupKey,name:data.data.name});
+  }catch(error){setLookup({key:lookupKey,message:error instanceof Error?error.message:'Tra cứu chưa thành công.'})}
+  finally{setLookupBusy(false)}
+ }
  async function makeQr(){
   if(!payload)return;
   setQrBusy(true);setQrError('');
@@ -74,18 +99,24 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
      }}/></label>)}
     <fieldset className="pay-slip-bank">
      <legend>Thông tin nhận chuyển khoản</legend>
-     <label>Ngân hàng<select value={bank} onChange={event=>setBank(event.target.value)}>
-      <option value="">Chọn ngân hàng</option>
-      <optgroup label="Hỗ trợ chuyển khoản VietQR">
-       {vietQrBanks.filter(item=>item.transferSupported).map(item=><option key={item.bin} value={item.bin}>{item.name}</option>)}
-      </optgroup>
-      <optgroup label="Chưa hỗ trợ chuyển khoản VietQR">
-       {vietQrBanks.filter(item=>!item.transferSupported).map(item=><option key={item.bin} value={item.bin} disabled>{item.name}</option>)}
-      </optgroup>
-      <option value="other">Ngân hàng khác</option>
-     </select></label>
+     <div className="pay-slip-bank-search">
+      <label>Ngân hàng<input type="search" placeholder="Tìm theo tên hoặc mã BIN" value={bankQuery}
+       aria-expanded={searchOpen} aria-controls="payroll-bank-options"
+       onFocus={()=>setSearchOpen(true)} onKeyDown={event=>{if(event.key==='Escape')setSearchOpen(false)}}
+       onChange={event=>{setBankQuery(event.target.value);setBank('');setSearchOpen(true)}}/></label>
+      {searchOpen&&<ul id="payroll-bank-options" aria-label="Kết quả tìm ngân hàng">
+       {matchedBanks.map(item=><li key={item.bin}><button type="button" disabled={!item.transferSupported}
+        onClick={()=>{setBank(item.bin);setBankQuery(item.name);setSearchOpen(false)}}>{item.name} · {item.bin}{!item.transferSupported?' · Chưa hỗ trợ QR':''}</button></li>)}
+       {matchedBanks.length===0&&<li>Không tìm thấy ngân hàng.</li>}
+       <li><button type="button" onClick={()=>{setBank('other');setBankQuery('Ngân hàng khác');setSearchOpen(false)}}>Nhập mã BIN thủ công</button></li>
+      </ul>}
+     </div>
      {bank==='other'&&<label>Mã BIN ngân hàng (6 số)<input inputMode="numeric" maxLength={6} value={otherBin} onChange={event=>setOtherBin(event.target.value)}/></label>}
      <label>Số tài khoản người nhận<input inputMode="numeric" maxLength={19} value={account} onChange={event=>setAccount(event.target.value)}/></label>
+     <button className="btn" type="button" disabled={!selectedBank?.lookupSupported||!/^\d{4,19}$/.test(receiverAccount)||lookupBusy} onClick={()=>void findOwner()}>{lookupBusy?'Đang tra cứu…':'Tra tên chủ tài khoản'}</button>
+     {lookup?.key===lookupKey&&<small role="status">{lookup.message}</small>}
+     {ownerName&&<small role="status">Chủ tài khoản: {ownerName}</small>}
+     <small>Khi bấm tra tên, ngân hàng và số tài khoản được gửi tới VietQR để xác minh.</small>
      <button className="btn" type="button" disabled={!payload||qrBusy} onClick={()=>void makeQr()}>{qrBusy?'Đang tạo mã…':'Tạo mã QR'}</button>
      <small>{amount<=0?'Phiếu không có số tiền dương để tạo QR.':'Kiểm tra ngân hàng, số tài khoản và tên người nhận trên ứng dụng ngân hàng trước khi xác nhận chuyển tiền.'}</small>
      {qrError&&<small role="alert">{qrError}</small>}
@@ -118,6 +149,7 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
     <div><strong>Thông tin chuyển khoản</strong>
      <p>Ngân hàng: {selectedBank?.name||'BIN '+bin}</p>
      <p>Số tài khoản: {receiverAccount}</p>
+     {ownerName&&<p>Chủ tài khoản: {ownerName}</p>}
      <p>Số tiền: {money(amount)}</p>
      {qr&&<p>Nội dung: {reference}</p>}
     </div>

@@ -176,3 +176,7 @@ Quản trị viên mở **Quản trị tài khoản** để khóa và mở khóa
 Tài khoản thường cần admin duyệt riêng từng mục **Kho liên kết**, **Lương cá nhân**, **Lương nhóm**. Quyền xem lương nhóm còn yêu cầu vai trò chủ nhóm hoặc trưởng nhóm. Admin vào **Quản trị tài khoản** để duyệt, từ chối, thu hồi hoặc xóa tài khoản. Xóa tài khoản thu hồi phiên và ngăn đăng nhập, giữ liên kết lịch sử công việc trong cơ sở dữ liệu.
 
 Quản trị viên sửa thông tin công ty và nhãn trường tại **Mẫu in phiếu lương và phiếu tạm ứng**. Trong bảng lương, có thể in theo dòng hoặc theo tổng từng người trong tháng ở bảng nhóm. Phụ cấp, bảo hiểm và thuế nhập khi in chỉ tác động phiếu hiện tại. Trình duyệt hỗ trợ in A4 hoặc lưu PDF.
+
+### Tra tên chủ tài khoản trên phiếu lương
+
+Cấu hình `VIETQR_CLIENT_ID` và `VIETQR_API_KEY` từ My VietQR ở máy chủ xử lý API (Render nếu đang dùng Vercel rewrite sang Render). Triển khai lại sau khi lưu biến môi trường. Người có quyền bảng lương có thể bấm **Tra tên chủ tài khoản** để gửi mã BIN và số tài khoản tới VietQR. Kết quả xác minh xuất hiện cạnh QR và trên phiếu in.
