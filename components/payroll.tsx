@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState,type FormEvent} from 'react';
-import {payrollData} from '../lib/payroll';
+import {payrollData,payrollByWorker,payrollWorkerKey} from '../lib/payroll';
 import styles from './payroll.module.css';
 
 type Entry=NonNullable<ReturnType<typeof payrollData>> & {id:string};
@@ -15,6 +15,7 @@ async function request(scope:string,id='',method='GET',data?:object){
 
 export default function Payroll({lang,teamId}:{lang:string;teamId?:string}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
+ const [workerFilter,setWorkerFilter]=useState('');
  const [scope,setScope]=useState('me');
  const [period,setPeriod]=useState(()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Ho_Chi_Minh'}).format(new Date()).slice(0,7));
  const [rows,setRows]=useState<Entry[]>([]),[edit,setEdit]=useState<Entry|null>(null);
@@ -26,7 +27,13 @@ export default function Payroll({lang,teamId}:{lang:string;teamId?:string}){
   request(actualScope).then(data=>{if(active)setRows(data)}).catch(()=>{if(active)setError(true)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false};
  },[actualScope,revision]);
- const visible=rows.filter(row=>row.period===period);
+ const isTeam=actualScope!=='me';
+ const monthly=rows.filter(row=>row.period===period);
+ const grouped=payrollByWorker(monthly);
+ const selected=grouped.find(([key])=>key===workerFilter)?.[0]||'';
+ const visible=(isTeam&&selected?monthly.filter(row=>payrollWorkerKey(row.worker)===selected):monthly)
+  .sort((a,b)=>(a.workDate||'').localeCompare(b.workDate||'')||(a.start||'').localeCompare(b.start||''));
+ const hoursText=(value:number)=>new Intl.NumberFormat(lang==='vi'?'vi-VN':'en',{maximumFractionDigits:2}).format(value);
  const currency=(value:number)=>new Intl.NumberFormat(lang==='vi'?'vi-VN':'en',{style:'currency',currency:'VND'}).format(value);
  const monetaryFields=[
   ['rate',t('Pay rate','Mức lương')],['advance',t('Advance','Tiền ứng')],
@@ -37,7 +44,7 @@ export default function Payroll({lang,teamId}:{lang:string;teamId?:string}){
   const fields=new FormData(event.currentTarget);
   const data=Object.fromEntries(fields);
   const payload={...data,mode,...Object.fromEntries([...monetaryFields.map(([key])=>key),'hours'].map(key=>[key,Number(fields.get(key)||0)]))};
-  if(!payrollData(payload)){setError(true);return}
+  if(!payrollData(payload,isTeam)){setError(true);return}
   setBusy(true);setError(false);
   try{
    const next:Entry=await request(actualScope,edit?.id,edit?'PATCH':'POST',payload);
@@ -54,9 +61,12 @@ export default function Payroll({lang,teamId}:{lang:string;teamId?:string}){
  return <section>
   <div className="page-heading"><div><h1>{t('Payroll and work plans','Lương và kế hoạch làm việc')}</h1></div></div>
   <div className={styles.toolbar}>
-   <label>{t('Payroll scope','Bảng lương')}<select disabled={busy} value={actualScope==='me'?'me':'team'} onChange={event=>setScope(event.target.value)}>
+   <label>{t('Payroll scope','Bảng lương')}<select disabled={busy} value={actualScope==='me'?'me':'team'} onChange={event=>{setWorkerFilter('');setScope(event.target.value)}}>
     <option value="me">{t('Personal','Cá nhân')}</option>{teamId&&<option value="team">{t('Current team','Nhóm đang mở')}</option>}
    </select></label>
+   {isTeam&&<label>{t('Worker','Người làm')}<select value={selected} onChange={event=>setWorkerFilter(event.target.value)}>
+    <option value="">{t('All workers','Tất cả người làm')}</option>{grouped.map(([key,group])=><option key={key} value={key}>{group.name}</option>)}
+   </select></label>}
    <label>{t('Month','Tháng')}<input type="month" value={period} disabled={busy} onChange={event=>{if(event.target.value)setPeriod(event.target.value)}}/></label>
   </div>
   <p>{t('Total pay includes commission. Remaining pay is total minus advances. Profit is revenue minus total pay.','Tổng tiền lương gồm hoa hồng. Tiền còn lại bằng tổng tiền trừ tiền ứng. Lợi nhuận bằng doanh thu trừ tổng tiền lương.')}</p>
@@ -69,16 +79,31 @@ export default function Payroll({lang,teamId}:{lang:string;teamId?:string}){
     <label>{t('Pay type','Hình thức trả lương')}<select value={mode} onChange={event=>setMode(event.target.value==='month'?'month':'hour')}>
      <option value="hour">{t('Hourly','Theo giờ')}</option><option value="month">{t('Monthly','Theo tháng')}</option>
     </select></label>
-    {mode==='hour'&&<label>{t('Hours worked','Số giờ làm')}<input name="hours" type="number" min={0} max={744} step=".01" defaultValue={edit?.hours} required/></label>}
+    {isTeam&&<>
+     <label>{t('Work date','Ngày làm')}<input name="workDate" type="date" required={mode==='hour'} defaultValue={edit?.workDate}/></label>
+     <label>{t('Clock in','Giờ vào')}<input name="start" type="time" required={mode==='hour'} defaultValue={edit?.start}/></label>
+     <label>{t('Clock out','Giờ ra')}<input name="end" type="time" required={mode==='hour'} defaultValue={edit?.end}/></label>
+     <small className={styles.full}>{t('Hours are calculated from the start and end times on the selected work date.','Số giờ được tính từ giờ vào và giờ ra trong ngày đã chọn. Ngày làm phải thuộc kỳ lương.')}</small>
+    </>}
+    {mode==='hour'&&!isTeam&&<label>{t('Hours worked','Số giờ làm')}<input name="hours" type="number" min={0} max={744} step=".01" defaultValue={edit?.hours} required/></label>}
     {monetaryFields.map(([key,label])=><label key={key}>{label} (₫)<input name={key} type="number" min={0} max={1000000000000} step={1} defaultValue={edit?.[key]||0} required/></label>)}
     <label className={styles.full}>{t('Work plan','Kế hoạch làm việc')}<textarea name="plan" rows={3} maxLength={2000} defaultValue={edit?.plan}/></label>
     <div className={styles.actions}><button className="btn primary" disabled={busy}>{edit?t('Save changes','Lưu thay đổi'):t('Add entry','Thêm dòng lương')}</button>
      {edit&&<button className="btn" type="button" disabled={busy} onClick={()=>{setEdit(null);setMode('hour')}}>{t('Cancel','Hủy')}</button>}</div>
    </form>
+   {isTeam&&grouped.length>0&&<section>
+    <h2>{t('Payroll by worker','Tổng lương theo người')}</h2>
+    <div className={styles.table}><table><thead><tr>
+     {[t('Worker','Người làm'),t('Entries','Số dòng'),t('Hours','Tổng giờ'),t('Total pay','Tổng lương'),t('Advance','Tiền ứng'),t('Remaining','Còn lại')].map(label=><th scope="col" key={label}>{label}</th>)}
+    </tr></thead><tbody>{grouped.map(([key,group])=><tr key={key}>
+     <td><button type="button" className="btn" aria-pressed={selected===key} onClick={()=>setWorkerFilter(selected===key?'':key)}>{group.name}</button></td>
+     <td>{group.count}</td><td>{hoursText(group.hours)}</td><td>{currency(group.total)}</td><td>{currency(group.advance)}</td><td>{currency(group.balance)}</td>
+    </tr>)}</tbody></table></div>
+   </section>}
    {visible.length?<div className={styles.table}><table>
     <thead><tr>{[t('Worker / work','Người làm / công việc'),t('Plan','Kế hoạch'),t('Pay rate','Mức lương'),t('Revenue','Doanh thu'),t('Commission','Hoa hồng'),t('Total','Tổng tiền'),t('Advance','Tiền ứng'),t('Balance','Còn lại'),t('Profit','Lợi nhuận'),t('Actions','Thao tác')].map(label=><th scope="col" key={label}>{label}</th>)}</tr></thead>
-    <tbody>{visible.map(row=><tr key={row.id}><td><strong>{row.worker}</strong><br/>{row.work}</td><td>{row.plan||'—'}</td>
-     <td>{currency(row.rate)} / {row.mode==='hour'?t('hour','giờ'):t('month','tháng')}{row.mode==='hour'&&<><br/>{row.hours} {t('hours','giờ')}</>}</td>
+    <tbody>{visible.map(row=><tr key={row.id}><td><strong>{row.worker}</strong><br/>{row.work}{isTeam&&<><br/><small>{row.workDate?row.workDate+' · '+row.start+'–'+row.end:t('No shift time recorded','Chưa có giờ làm cụ thể')}</small></>}</td><td>{row.plan||'—'}</td>
+     <td>{currency(row.rate)} / {row.mode==='hour'?t('hour','giờ'):t('month','tháng')}{(row.mode==='hour'||row.workDate)&&<><br/>{hoursText(row.hours)} {t('hours','giờ')}</>}</td>
      {[row.revenue,row.commission,row.total,row.advance,row.balance,row.profit].map((n,index)=><td key={index}>{currency(n)}</td>)}
      <td><div className={styles.actions}><button className="btn" disabled={busy} onClick={()=>{setEdit(row);setMode(row.mode)}}>{t('Edit','Sửa')}</button><button className="btn" disabled={busy} onClick={()=>void remove(row)}>{t('Delete','Xóa')}</button></div></td>
     </tr>)}</tbody>

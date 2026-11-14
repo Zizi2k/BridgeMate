@@ -103,7 +103,7 @@ async function handle(req:Request){
    return ok(rows.map(row=>({...row.data as object,id:row.id})));
   }
   if(method==='POST'&&!entryId){
-   const data=payrollData(body);check(data);
+   const data=payrollData(body,scope!=='me');check(data);
    const id=uid();
    await db.insert(payrollEntries).values({id,scopeId,data});
    return ok({...data,id},201);
@@ -114,7 +114,7 @@ async function handle(req:Request){
     const [result]=await db.delete(payrollEntries).where(where);
     check(result.affectedRows,'NOT_FOUND',404);return ok(null);
    }
-   const data=payrollData(body);check(data);
+   const data=payrollData(body,scope!=='me');check(data);
    const [result]=await db.update(payrollEntries).set({data}).where(where);
    check(result.affectedRows,'NOT_FOUND',404);return ok({...data,id:entryId});
   }
