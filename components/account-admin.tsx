@@ -16,6 +16,36 @@ async function request(path:string, body?:object,method='PATCH'){
  return (await response.json()).data;
 }
 
+function ModuleVisibility({lang}:{lang:string}){
+ const vi=lang==='vi';
+ const [state,setState]=useState<{links:boolean;payroll:boolean}|null>(null);
+ const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ useEffect(()=>{
+  fetch('/api/module-visibility',{cache:'no-store'}).then(async res=>{
+   if(!res.ok)throw Error();
+   setState((await res.json()).data);
+  }).catch(()=>setMessage(vi?'Không tải được cấu hình hiển thị.':'Unable to load visibility settings.'));
+ },[vi]);
+ async function toggle(module:'links'|'payroll',hidden:boolean){
+  setBusy(true);setMessage('');
+  try{
+   const res=await fetch('/api/module-visibility',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({module,hidden})});
+   if(!res.ok)throw Error();
+   setState((await res.json()).data);
+   setMessage(vi?'Đã lưu.':'Saved.');
+  }catch{setMessage(vi?'Không lưu được thay đổi.':'Unable to save changes.')}
+  finally{setBusy(false)}
+ }
+ return <fieldset className="review-card">
+  <legend>{vi?'Hiển thị tính năng với tài khoản khác':'Feature visibility for other accounts'}</legend>
+  {state&&<div style={{display:'flex',flexWrap:'wrap',gap:'1rem'}}>
+   <label><input type="checkbox" checked={state.links} disabled={busy} onChange={e=>void toggle('links',e.target.checked)}/> {vi?'Ẩn Kho liên kết':'Hide My links'}</label>
+   <label><input type="checkbox" checked={state.payroll} disabled={busy} onChange={e=>void toggle('payroll',e.target.checked)}/> {vi?'Ẩn Bảng lương':'Hide Payroll'}</label>
+  </div>}
+  {message&&<p role="status">{message}</p>}
+ </fieldset>;
+}
+
 export default function AccountAdmin({lang}:{lang:string}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
  const [page,setPage]=useState(1),[rows,setRows]=useState<Account[]>([]),[hasMore,setHasMore]=useState(false);
@@ -54,6 +84,7 @@ export default function AccountAdmin({lang}:{lang:string}){
  }
  return <section>
   <div className="page-heading"><div><h1>{t('Account administration','Quản trị tài khoản')}</h1></div></div>
+  <ModuleVisibility lang={lang}/>
   <PrintTemplateEditor/>
   {error&&<p role="alert">{t('Could not complete the request. Reload and try again.','Không thể thực hiện thao tác. Tải lại trang và thử lại.')}</p>}
   {loading?<p role="status">{t('Loading accounts…','Đang tải tài khoản…')}</p>:

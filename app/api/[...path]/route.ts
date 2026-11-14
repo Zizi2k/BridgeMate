@@ -68,7 +68,23 @@ async function handle(req:Request){
  }
  check(user,'UNAUTHORIZED',401);
  const admin=accountRole(user)==='admin';
- const approved=async (module:Module)=> admin||!user.demo&&(await db.select({status:moduleApprovals.status})
+ const visibility=async()=>{
+  const rows=await db.select().from(printSettings).where(inArray(printSettings.id,['visibility-links','visibility-payroll']));
+  return {links:rows.some(row=>row.id==='visibility-links'&&row.data===true),
+   payroll:rows.some(row=>row.id==='visibility-payroll'&&row.data===true)};
+ };
+ const hidden=async(module:Module)=>(await visibility())[module==='links'?'links':'payroll'];
+ if(path[0]==='module-visibility'&&path.length===1){
+  if(method==='GET')return ok(await visibility());
+  if(method==='PATCH'){
+   check(admin,'FORBIDDEN',403);
+   check((body.module==='links'||body.module==='payroll')&&typeof body.hidden==='boolean');
+   const id='visibility-'+body.module,data=body.hidden;
+   await db.insert(printSettings).values({id,data}).onDuplicateKeyUpdate({set:{data}});
+   return ok(await visibility());
+  }
+ }
+ const approved=async (module:Module)=> admin||!user.demo&&!(await hidden(module))&&(await db.select({status:moduleApprovals.status})
   .from(moduleApprovals).where(and(eq(moduleApprovals.userId,user.id),eq(moduleApprovals.module,module))).limit(1))[0]?.status==='approved';
  if(path[0]==='access'&&path.length===1){
   if(method==='GET'){
@@ -79,6 +95,7 @@ async function handle(req:Request){
    check(!user.demo,'FORBIDDEN',403);
    check(isModule(body.module));
    const module=body.module;
+   check(admin||!await hidden(module),'MODULE_HIDDEN',403);
    await db.insert(moduleApprovals).values({userId:user.id,module,status:'pending'}).onDuplicateKeyUpdate({
     set:{status:sql`CASE WHEN ${moduleApprovals.status} = 'approved' THEN 'approved' ELSE 'pending' END`},
    });
