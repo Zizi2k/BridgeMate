@@ -69,6 +69,11 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
    if(!response.ok){
     const code=data.error?.code;
     throw Error(code==='BANK_LOOKUP_UNCONFIGURED'?'Chưa cấu hình dịch vụ tra cứu VietQR.':
+     code==='BANK_LOOKUP_INVALID_ACCOUNT'?'VietQR báo số tài khoản không hợp lệ. Kiểm tra lại ngân hàng và số tài khoản.':
+     code==='BANK_LOOKUP_UNSUPPORTED'?'VietQR chưa hỗ trợ tra tên ở ngân hàng này.':
+     code==='BANK_LOOKUP_CREDENTIALS'?'VietQR từ chối xác thực hoặc quyền tra cứu. Kiểm tra Client ID, API Key và quyền sử dụng API.':
+     code==='BANK_LOOKUP_PROVIDER_LIMIT'?'Đã đạt giới hạn tra cứu của VietQR.':
+     code==='BANK_LOOKUP_UNAVAILABLE'?'Dịch vụ VietQR đang gặp lỗi hoặc quá thời gian phản hồi. Thử lại sau.':
      code==='BANK_LOOKUP_RATE_LIMIT'?'Bạn đã tra cứu nhiều lần. Thử lại sau một phút.':
      code==='BANK_LOOKUP_UNCONFIRMED'?'VietQR chưa xác nhận được tên chủ tài khoản.':'Tra cứu chưa thành công. Vui lòng thử lại.');
    }

@@ -103,9 +103,15 @@ async function handle(req:Request){
    method:'POST',headers:{'Content-Type':'application/json','x-client-id':clientId,'x-api-key':apiKey},
    body:JSON.stringify({bin:Number(body.bin),accountNumber:body.accountNumber}),signal:AbortSignal.timeout(8000),cache:'no-store',
   });}catch{throw new ApiError('BANK_LOOKUP_UNAVAILABLE',502)}
+  if(response.status===401||response.status===403)throw new ApiError('BANK_LOOKUP_CREDENTIALS',502);
+  if(response.status===429)throw new ApiError('BANK_LOOKUP_PROVIDER_LIMIT',429);
   check(response.ok,'BANK_LOOKUP_UNAVAILABLE',502);
   const result=await response.json().catch(()=>null);
-  const name=result?.code==='00'&&typeof result.data?.accountName==='string'?result.data.accountName.trim():'';
+  const providerCode=String(result?.code??'');
+  if(providerCode==='21'||providerCode==='42')throw new ApiError('BANK_LOOKUP_INVALID_ACCOUNT',422);
+  if(providerCode==='41')throw new ApiError('BANK_LOOKUP_UNSUPPORTED',422);
+  if(providerCode==='45'||providerCode==='43')throw new ApiError('BANK_LOOKUP_UNAVAILABLE',502);
+  const name=providerCode==='00'&&typeof result.data?.accountName==='string'?result.data.accountName.trim():'';
   check(name&&name.length<=180,'BANK_LOOKUP_UNCONFIRMED',422);
   return ok({name});
  }
