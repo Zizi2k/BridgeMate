@@ -47,3 +47,8 @@ export const printSettings=mysqlTable('print_settings',{id:id().primaryKey(),dat
 export const removedAccounts=mysqlTable('removed_accounts',{
  userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),
 });
+
+export const aptisChallenges=mysqlTable('aptis_challenges',{
+ sessionId:varchar('session_id',{length:64}).primaryKey().references(()=>sessions.id,{onDelete:'cascade'}),
+ data:json('data').notNull(),
+});

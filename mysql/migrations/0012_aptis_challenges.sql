@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS aptis_challenges (
+ session_id VARCHAR(64) PRIMARY KEY,
+ data JSON NOT NULL,
+ FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

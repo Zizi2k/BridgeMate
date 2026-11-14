@@ -201,3 +201,9 @@ FROM (
  SELECT t.id AS task_id,t.team_id,c.user_id FROM task_collaborators c INNER JOIN tasks t ON t.id=c.task_id INNER JOIN teams tm ON tm.id=t.team_id WHERE t.status='done' AND t.deleted=0 AND tm.deleted=0
 ) earned
 GROUP BY earned.task_id,earned.team_id;
+
+CREATE TABLE IF NOT EXISTS aptis_challenges (
+ session_id VARCHAR(64) PRIMARY KEY,
+ data JSON NOT NULL,
+ FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

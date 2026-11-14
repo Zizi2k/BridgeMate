@@ -3,6 +3,7 @@
 import {useEffect,useState} from 'react';
 
 import {modules,moduleLabels,type Module,type Permission} from '../lib/module-access';
+import {AptisBank} from './aptis';
 import {PrintTemplateEditor} from './print-payroll';
 
 type Account={id:string;name:string;email:string;accountRole:'admin'|'member';suspended:boolean;permissions:Partial<Record<Module,Permission>>};
@@ -86,6 +87,7 @@ export default function AccountAdmin({lang}:{lang:string}){
   <div className="page-heading"><div><h1>{t('Account administration','Quản trị tài khoản')}</h1></div></div>
   <ModuleVisibility lang={lang}/>
   <PrintTemplateEditor/>
+  <AptisBank lang={lang}/>
   {error&&<p role="alert">{t('Could not complete the request. Reload and try again.','Không thể thực hiện thao tác. Tải lại trang và thử lại.')}</p>}
   {loading?<p role="status">{t('Loading accounts…','Đang tải tài khoản…')}</p>:
    <div className="members-grid">{rows.map(account=><article className="member-card" key={account.id}>

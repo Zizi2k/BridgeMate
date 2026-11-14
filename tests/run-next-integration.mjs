@@ -4,7 +4,7 @@ import {mysqlConfig} from '../lib/mysql-config.ts';
 import {spawn} from 'node:child_process';
 const config=mysqlConfig();
 const database='bridgemate_test_'+crypto.randomUUID().replaceAll('-','');
-const env={...process.env,MYSQL_DATABASE:database,NEXT_TELEMETRY_DISABLED:'1'};
+const env={...process.env,MYSQL_DATABASE:database,APTIS_GATE_ENABLED:'false',NEXT_TELEMETRY_DISABLED:'1'};
 const {connectionLimit,maxIdle,idleTimeout,waitForConnections,queueLimit,...connection}=config;
 let server,logs='',admin,created=false;
 function command(args){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,args,{env,stdio:'inherit'});child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(new Error('Command failed: '+args.join(' '))))})}

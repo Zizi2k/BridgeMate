@@ -1,3 +1,5 @@
+import aptisVocabulary from '../../../lib/data/aptis-vocabulary.json';
+import {aptisExample,createAptisQuestions,publicAptisQuestions,readAptisDocx,type AptisChallenge,type Vocabulary} from '../../../lib/aptis';
 import {vietQrBanks} from '../../../lib/vietqr-banks';
 import {isModule,printDefaults,validatePrintTemplate,type Module} from '../../../lib/module-access';
 import {payrollData} from '../../../lib/payroll';
@@ -12,7 +14,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges} from '../../../db/schema';
 import {and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -38,7 +40,7 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<(path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:path[0]==='quiz'&&path[1]==='import'?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
+ check(JSON.stringify(body).length<(path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&path[1]==='bank')?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
  async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);return {...publicUser(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
@@ -67,7 +69,109 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
  check(user,'UNAUTHORIZED',401);
+  const dailyLimit=Math.min(200,Math.max(1,Number(process.env.AI_DAILY_LIMIT)||30));
+ async function reserveAIRequest(){
+   const time=Date.now(),day=new Date(time).toISOString().slice(0,10);
+   const windows=[{id:user.id+':day:'+day,limit:dailyLimit,expires:Date.parse(day+'T00:00:00Z')+86400000},{id:user.id+':minute:'+Math.floor(time/60000),limit:6,expires:time+120000}];
+   await db.transaction(async tx=>{
+    for(const w of windows){
+     await tx.insert(aiUsage).values({id:w.id,userId:user.id,requests:1,expires:w.expires}).onDuplicateKeyUpdate({set:{requests:sql`${aiUsage.requests}+1`}});
+     const [counter]=await tx.select().from(aiUsage).where(eq(aiUsage.id,w.id)).for('update');
+     if(counter.requests>w.limit)throw new AIError('AI_RATE_LIMIT',429);
+    }
+   });
+ }
  const admin=accountRole(user)==='admin';
+ const isAptis=path[0]==='aptis'&&path.length===2;
+ const bankId='aptis-vocabulary';
+ const configurationQuery=eq(printSettings.id,bankId);
+ const [settings]=await db.select({
+  enabled:sql<string|null>`JSON_UNQUOTE(JSON_EXTRACT(${printSettings.data}, '$.enabled'))`,
+ }).from(printSettings).where(configurationQuery).limit(1);
+ const aptisEnabled=settings?.enabled==null?process.env.APTIS_GATE_ENABLED!=='false':settings.enabled==='true';
+ const sessionId=token!;
+ const challengeFor=async()=>{
+  const [entry]=await db.select().from(aptisChallenges).where(eq(aptisChallenges.sessionId,sessionId)).limit(1);
+  return entry?.data as AptisChallenge|undefined;
+ };
+ const getAptisVocabulary=async()=>{
+  const [entry]=await db.select().from(printSettings).where(configurationQuery).limit(1);
+  return (entry?.data as {vocabulary:Vocabulary[]}|undefined)?.vocabulary??aptisVocabulary;
+ };
+ if(isAptis&&path[1]==='bank'){
+  check(admin,'FORBIDDEN',403);
+  const current=await getAptisVocabulary();
+  if(method==='GET')return ok({count:current.length,enabled:aptisEnabled});
+  if(method==='PATCH'){
+   check(typeof body.enabled==='boolean'||typeof body.docx==='string');
+   const vocabulary=typeof body.docx==='string'?await readAptisDocx(Buffer.from(body.docx,'base64')):current;
+   const data={enabled:typeof body.enabled==='boolean'?body.enabled:aptisEnabled,vocabulary};
+   await db.insert(printSettings).values({id:bankId,data}).onDuplicateKeyUpdate({set:{
+    data:typeof body.enabled==='boolean'&&typeof body.docx==='string'?data:
+     typeof body.enabled==='boolean'?sql`JSON_SET(${printSettings.data}, '$.enabled', CAST(${JSON.stringify(data.enabled)} AS JSON))`:
+     sql`JSON_SET(${printSettings.data}, '$.vocabulary', CAST(${JSON.stringify(vocabulary)} AS JSON))`,
+   }});
+   return ok({count:vocabulary.length,enabled:data.enabled});
+  }
+ }
+ if(isAptis&&path[1]==='start'&&method==='POST'){
+  if(!aptisEnabled)return ok(null);
+  const questions=createAptisQuestions(await getAptisVocabulary());
+  const challenge:AptisChallenge={id:uid(),questions,scores:questions.map(()=>null),passed:false};
+  await db.insert(aptisChallenges).values({sessionId,data:challenge}).onDuplicateKeyUpdate({set:{data:challenge}});
+  return ok({id:challenge.id,questions:publicAptisQuestions(questions)});
+ }
+ if(isAptis&&path[1]==='submit'&&method==='POST'){
+  return db.transaction(async tx=>{
+   const [entry]=await tx.select().from(aptisChallenges).where(eq(aptisChallenges.sessionId,sessionId)).for('update');
+   const challenge=entry?.data as AptisChallenge|undefined;
+   check(challenge&&challenge.id===body.id,'APTIS_EXPIRED',409);
+   check(Array.isArray(body.answers)&&body.answers.length===challenge.questions.length);
+   const scores=challenge.questions.map((question,index)=>{
+    if(challenge.scores[index]===true)return true;
+    const answer=body.answers[index];
+    check(Number.isInteger(answer)&&answer>=0&&answer<question.options.length);
+    return answer===question.correct;
+   });
+   const passed=scores.every(Boolean);
+   await tx.update(aptisChallenges).set({data:{...challenge,scores,passed}}).where(eq(aptisChallenges.sessionId,sessionId));
+   return ok({scores,passed});
+  });
+ }
+ if(isAptis&&path[1]==='hint'&&method==='POST'){
+  const challenge=await challengeFor();
+  check(challenge&&challenge.id===body.id,'APTIS_EXPIRED',409);
+  const index=body.index;
+  check(Number.isInteger(index)&&challenge.scores[index]===false,'APTIS_HINT_UNAVAILABLE',403);
+  const question=challenge.questions[index];
+  const example=aptisExample(question);
+  const vi=body.language==='vi';
+  const fallback={text:[question.partOfSpeech&&(vi?'Loại từ: ':'Part of speech: ')+question.partOfSpeech,
+   example&&(vi?'Đọc ngữ cảnh: ':'Read the context: ')+example].filter(Boolean).join('\n')||
+   (vi?'Thử đặt từ vào một câu và loại những nghĩa khác ngữ cảnh.':'Try using the word in a sentence and rule out meanings that do not fit.'),ai:false};
+  try{
+   const aiConfig=getAIConfig(process.env);
+   if(!aiConfig.apiKey||process.env.AI_ENABLED==='false')return ok(fallback);
+   await reserveAIRequest();
+   const hint=await generateAI({
+    action:'ask',targetLanguage:vi?'vi':'en',
+    text:'Give the learner one short clue about the vocabulary word. Use a new English sentence with a blank or describe a typical situation. Never translate the word, reveal the exact meaning, state an answer option or give its letter.',
+    context:JSON.stringify({word:question.word,meaning:question.meaning,partOfSpeech:question.partOfSpeech,example}),
+   },aiConfig);
+   return ok({text:hint.text,ai:true});
+  }catch(error){
+   if(error instanceof AIError)return ok(fallback);
+   throw error;
+  }
+ }
+ if(isAptis)throw new ApiError('NOT_FOUND',404);
+ if(aptisEnabled){
+  const [unlocked]=await db.select({sessionId:aptisChallenges.sessionId}).from(aptisChallenges).where(and(
+   eq(aptisChallenges.sessionId,sessionId),
+   sql`JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.passed')) = 'true'`,
+  )).limit(1);
+  check(unlocked,'APTIS_REQUIRED',403);
+ }
  const visibility=async()=>{
   const rows=await db.select().from(printSettings).where(inArray(printSettings.id,['visibility-links','visibility-payroll']));
   return {links:rows.some(row=>row.id==='visibility-links'&&row.data===true),
@@ -291,21 +395,12 @@ async function handle(req:Request){
  if(path[0]==='ai'){
   const aiConfig=getAIConfig(process.env);
   const configured=!!aiConfig.apiKey&&process.env.AI_ENABLED!=='false';
-  const dailyLimit=Math.min(200,Math.max(1,Number(process.env.AI_DAILY_LIMIT)||30));
   if(path[1]==='status'&&method==='GET')return ok({configured,dailyLimit,provider:aiConfig.provider});
   if(path[1]==='assist'&&method==='POST'){
    if(!configured)throw new AIError('AI_NOT_CONFIGURED',503);
    const input=validateAIInput(body);
    if(body.taskId){check(typeof body.taskId==='string');await taskAccess(body.taskId)}
-   const time=Date.now(),day=new Date(time).toISOString().slice(0,10);
-   const windows=[{id:user.id+':day:'+day,limit:dailyLimit,expires:Date.parse(day+'T00:00:00Z')+86400000},{id:user.id+':minute:'+Math.floor(time/60000),limit:6,expires:time+120000}];
-   await db.transaction(async tx=>{
-    for(const w of windows){
-     await tx.insert(aiUsage).values({id:w.id,userId:user.id,requests:1,expires:w.expires}).onDuplicateKeyUpdate({set:{requests:sql`${aiUsage.requests}+1`}});
-     const [counter]=await tx.select().from(aiUsage).where(eq(aiUsage.id,w.id)).for('update');
-     if(counter.requests>w.limit)throw new AIError('AI_RATE_LIMIT',429);
-    }
-   });
+   await reserveAIRequest();
    return ok(await generateAI(input,aiConfig));
   }
  }
