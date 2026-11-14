@@ -1,3 +1,4 @@
+import {accountRole} from "../../../lib/account-role";
 import {personalData,validDay} from '../../../lib/personal-workspace';
 import {rankTeam,completionRecipients,POINTS_PER_TASK} from '../../../lib/ranking';
 import {collaboratorIds,majorityNeeded,electionWinner,taskPermissions,canUpdateSubtask,TeamworkError} from '../../../lib/teamwork';
@@ -8,7 +9,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -21,13 +22,15 @@ function check(v:any,code='VALIDATION',status=400):asserts v{if(!v)throw new Api
 function str(v:any,max=4000){check(typeof v==='string'&&v.trim().length>0&&v.length<=max);return v.trim()}
 const hex=(v:ArrayBuffer|Uint8Array)=>Array.from(new Uint8Array(v instanceof Uint8Array?v.buffer:v)).map(x=>x.toString(16).padStart(2,'0')).join('');
 async function hash(password:string,salt=hex(crypto.getRandomValues(new Uint8Array(16)))){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);return salt+':'+hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:100000},key,256));}
-function publicUser(u:any){return {id:u.id,name:u.name,email:u.email,demo:!!u.demo}}
+function publicUser(u:any){return {id:u.id,name:u.name,email:u.email,demo:!!u.demo,accountRole:accountRole(u)}}
 async function handle(req:Request){
  const db=getDb(),url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,'').split('/').filter(Boolean),method=req.method;
  const ok=(data:any,status=200,headers:Record<string,string>={})=>Response.json({data},{status,headers:{'Cache-Control':'no-store',...headers}});
  const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('bm_session='))?.slice(11);
+ const suspended=async (id:string)=>!!(await db.select({suspended:accountAccess.suspended}).from(accountAccess).where(eq(accountAccess.userId,id)).limit(1))[0]?.suspended;
  let user:any=null;
  if(token){const s=await db.select().from(sessions).where(and(eq(sessions.id,token),gt(sessions.expires,Date.now()))).limit(1).then(rows=>rows[0]);if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).limit(1).then(rows=>rows[0])}
+ if(user&&await suspended(user.id))user=null;
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
@@ -42,7 +45,7 @@ async function handle(req:Request){
    const email=str(body.email,254).toLowerCase(),password=str(body.password,128);check(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
    const u=await db.select().from(users).where(eq(users.email,email)).limit(1).then(rows=>rows[0]);
    if(path[1]==='register'){check(password.length>=8);check(!u,'EMAIL_EXISTS',409);const n={id:uid(),name:str(body.name,80),email,password:await hash(password),demo:0};await db.insert(users).values(n);return session(n)}
-   check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);return session(u);
+   check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);check(!await suspended(u.id),'ACCOUNT_SUSPENDED',403);return session(u);
   }
   if(path[1]==='demo'&&method==='POST'){
    if(user)return ok(await userSummary(user));
@@ -60,6 +63,30 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
  check(user,'UNAUTHORIZED',401);
+ if(path[0]==='admin'){
+  check(accountRole(user)==='admin','FORBIDDEN',403);
+  if(path[1]==='accounts'&&path.length===2&&method==='GET'){
+   const page=Number(url.searchParams.get('page')||1);
+   check(Number.isSafeInteger(page)&&page>=1&&page<=10000);
+   const rows=await db.select({id:users.id,name:users.name,email:users.email,demo:users.demo,suspended:accountAccess.suspended})
+    .from(users).leftJoin(accountAccess,eq(users.id,accountAccess.userId))
+    .where(eq(users.demo,0)).orderBy(users.email).limit(26).offset((page-1)*25);
+   return ok({rows:rows.slice(0,25).map(row=>({...publicUser(row),suspended:!!row.suspended})),hasMore:rows.length>25});
+  }
+  if(path[1]==='accounts'&&path.length===3&&method==='PATCH'){
+   check(typeof body.suspended==='boolean');
+   const [target]=await db.select({id:users.id,demo:users.demo}).from(users).where(eq(users.id,path[2])).limit(1);
+   check(target&&!target.demo,'NOT_FOUND',404);
+   check(accountRole(target)!=='admin','FORBIDDEN',403);
+   const value=body.suspended?1:0;
+   await db.transaction(async tx=>{
+    await tx.insert(accountAccess).values({userId:target.id,suspended:value}).onDuplicateKeyUpdate({set:{suspended:value}});
+    if(value)await tx.delete(sessions).where(eq(sessions.userId,target.id));
+   });
+   return ok({suspended:!!value});
+  }
+  throw new ApiError('NOT_FOUND',404);
+ }
  if(path[0]==='personal'){
   const [,kind,entryId,...extra]=path;
   check((kind==='links'||kind==='tasks')&&extra.length===0,'NOT_FOUND',404);

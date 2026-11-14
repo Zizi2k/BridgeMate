@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS account_access (
+  user_id VARCHAR(36) NOT NULL PRIMARY KEY,
+  suspended TINYINT NOT NULL DEFAULT 0,
+  CONSTRAINT account_access_user_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

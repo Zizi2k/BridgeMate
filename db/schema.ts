@@ -29,3 +29,8 @@ export const personalEntries=mysqlTable('personal_entries',{
  kind:varchar('kind',{length:8}).notNull(),
  data:json('data').notNull(),
 },t=>[index('personal_entries_owner_kind').on(t.userId,t.kind)]);
+
+export const accountAccess=mysqlTable('account_access',{
+ userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),
+ suspended:int('suspended').notNull().default(0),
+});

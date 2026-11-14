@@ -164,3 +164,9 @@ The supplied BridgeMate logo is used in the public header, workspace sidebar, lo
 - PDF: hỗ trợ ô văn bản và ô đánh dấu tương tác (AcroForm). PDF scan, PDF phẳng và XFA chưa hỗ trợ.
 
 Tệp gốc và dữ liệu nhập được xử lý trong trình duyệt. AI chỉ nhận các đoạn ngắn quanh vị trí cần điền thông qua API đang cấu hình. Có thể nhập thủ công nếu AI tạm thời không khả dụng. Văn bản dài có thể làm Word tự xuống dòng hoặc đổi trang theo bố cục mẫu.
+
+## Quản trị tài khoản
+
+Chạy migration trước khi dùng bản mới. Để cấp quyền quản trị, tra UUID tài khoản đã đăng ký bằng MySQL với `SELECT id, email FROM users WHERE demo = 0;`, rồi đặt `BRIDGEMATE_ADMIN_IDS` ở backend bằng UUID đã xác nhận. Có thể thêm nhiều UUID, phân cách bằng dấu phẩy. Đặt biến ở Render nếu Vercel chuyển tiếp API sang Render, hoặc ở Vercel nếu Vercel chạy API trực tiếp. Triển khai lại nơi đã đổi cấu hình.
+
+Quản trị viên mở **Quản trị tài khoản** để khóa và mở khóa tài khoản thường. Khi khóa, các phiên đang lưu của tài khoản bị thu hồi. Quyền trong nhóm và quyền sở hữu dữ liệu cá nhân được kiểm tra độc lập với vai trò quản trị.
