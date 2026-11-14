@@ -230,7 +230,10 @@ async function handle(req:Request){
   if(method==='GET'&&!entryId){
    const day=url.searchParams.get('date')||'';
    if(kind==='tasks')check(validDay(day));
-   const where=kind==='tasks'?and(owned,sql`JSON_UNQUOTE(JSON_EXTRACT(${personalEntries.data}, '$.date')) = ${day}`):owned;
+   const where=kind==='tasks'?and(owned,sql`JSON_UNQUOTE(JSON_EXTRACT(${personalEntries.data}, '$.date')) = ${day}`):
+    and(owned,url.searchParams.get('hidden')==='1'?
+     sql`JSON_UNQUOTE(JSON_EXTRACT(${personalEntries.data}, '$.hidden')) = 'true'`:
+     sql`COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${personalEntries.data}, '$.hidden')), 'false') <> 'true'`);
    const rows=await db.select({id:personalEntries.id,data:personalEntries.data}).from(personalEntries).where(where);
    return ok(rows.map(row=>({...row.data as object,id:row.id})));
   }
@@ -247,8 +250,17 @@ async function handle(req:Request){
     check(result.affectedRows,'NOT_FOUND',404);
     return ok(null);
    }
+   if(kind==='links'&&'hidden' in body){
+    check(typeof body.hidden==='boolean'&&Object.keys(body).length===1);
+    const [result]=await db.update(personalEntries).set({
+     data:sql`JSON_SET(${personalEntries.data}, '$.hidden', CAST(${JSON.stringify(body.hidden)} AS JSON))`,
+    }).where(target);
+    check(result.affectedRows||(await db.select({id:personalEntries.id}).from(personalEntries).where(target).limit(1)).length,'NOT_FOUND',404);
+    return ok(null);
+   }
    const data=personalData(kind,body);check(data);
-   const [result]=await db.update(personalEntries).set({data}).where(target);
+   const [result]=await db.update(personalEntries).set({data:kind==='links'?
+    sql`JSON_SET(CAST(${JSON.stringify(data)} AS JSON), '$.hidden', COALESCE(JSON_EXTRACT(${personalEntries.data}, '$.hidden'), CAST('false' AS JSON)))`:data}).where(target);
    check(result.affectedRows,'NOT_FOUND',404);
    return ok({...data,id:entryId});
   }

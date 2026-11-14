@@ -49,7 +49,8 @@ export default function PersonalWorkspace({kind,lang}:{kind:Kind;lang:string}){
  const [query,setQuery]=useState(''),[category,setCategory]=useState('');
  const [edit,setEdit]=useState<Entry|null>(null),[busy,setBusy]=useState(false);
  const [error,setError]=useState(''),[loading,setLoading]=useState(true),[reload,setReload]=useState(0);
- const path=links?'links':'tasks?date='+encodeURIComponent(day);
+ const [showHidden,setShowHidden]=useState(false);
+ const path=links?(showHidden?'links?hidden=1':'links'):'tasks?date='+encodeURIComponent(day);
 
  useEffect(()=>{
   let active=true;
@@ -105,10 +106,14 @@ export default function PersonalWorkspace({kind,lang}:{kind:Kind;lang:string}){
  return <section className={styles.workspace}>
   <div className="page-heading">
    <div><h1>{links?t('My links','Kho liên kết'):t('Daily planner','Kế hoạch ngày')}</h1><p>{links?t('Save and open your websites.','Lưu và mở nhanh các website của bạn.'):t('Plan your work in time blocks.','Sắp xếp công việc theo khung giờ.')}</p></div>
-   <button className="btn primary" disabled={busy||loading||!!edit} onClick={()=>{setError('');setEdit(newEntry(day))}}><Plus size={17}/>{links?t('Add link','Thêm liên kết'):t('Add task','Thêm công việc')}</button>
+   <button className="btn primary" disabled={busy||loading||!!edit||showHidden} onClick={()=>{setError('');setEdit(newEntry(day))}}><Plus size={17}/>{links?t('Add link','Thêm liên kết'):t('Add task','Thêm công việc')}</button>
   </div>
   <div className={styles.toolbar}>
    {links?<><input type="search" aria-label={t('Find a link','Tìm liên kết')} placeholder={t('Find a link…','Tìm liên kết…')} value={query} onChange={e=>setQuery(e.target.value)}/>
+    <select aria-label={t('Link visibility','Trạng thái hiển thị')} value={showHidden?'hidden':'visible'} disabled={busy||!!edit}
+     onChange={event=>{setCategory('');setLoading(true);setRows([]);setShowHidden(event.target.value==='hidden')}}>
+     <option value="visible">{t('Visible links','Đang hiển thị')}</option><option value="hidden">{t('Hidden links','Đã ẩn')}</option>
+    </select>
     <select aria-label={t('Category','Danh mục')} value={category} onChange={e=>setCategory(e.target.value)}><option value="">{t('All categories','Tất cả danh mục')}</option>{categories.map(c=><option key={c}>{c}</option>)}</select></>:
     <><button className="btn" disabled={busy||!!edit} aria-label={t('Previous day','Ngày trước')} onClick={()=>shift(-1)}>‹</button>
     <input type="date" disabled={busy||!!edit} aria-label={t('Work date','Ngày làm việc')} value={day} onChange={e=>changeDay(e.target.value)}/>
@@ -147,6 +152,10 @@ export default function PersonalWorkspace({kind,lang}:{kind:Kind;lang:string}){
      <label className={styles.check}><input type="checkbox" checked={!!item.done} disabled={busy||!!edit} onChange={e=>{const done=e.currentTarget.checked;void perform(async()=>put(await request(kind+'/'+item.id,'PATCH',{...item,done})))}}/>{t('Completed','Hoàn thành')}</label></>}
     {item.note&&<p className={links?styles.linkNote:undefined}>{item.note}</p>}
     <div className={links?styles.linkActions:styles.toolbar}><button className="btn" disabled={busy||!!edit} onClick={()=>{setError('');setEdit(item)}}>{t('Edit','Sửa')}</button>
+     {links&&<button type="button" className="btn" disabled={busy||!!edit} aria-label={(showHidden?t('Show ','Hiện '):t('Hide ','Ẩn '))+item.title} onClick={()=>void perform(async()=>{
+      await request('links/'+item.id,'PATCH',{hidden:!showHidden});
+      setRows(current=>current.filter(row=>row.id!==item.id));
+     })}>{showHidden?t('Show','Hiện'):t('Hide','Ẩn')}</button>}
      <button className="btn" disabled={busy||!!edit} onClick={()=>{if(window.confirm(t('Delete this item?','Xóa mục này?')))void perform(async()=>{
       await request(kind+'/'+item.id,'DELETE',{});setRows(current=>current.filter(row=>row.id!==item.id));
      })}}>{t('Delete','Xóa')}</button></div>
