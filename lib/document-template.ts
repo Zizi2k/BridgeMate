@@ -3,7 +3,8 @@ import { PDFDocument, PDFTextField, PDFCheckBox } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export type Target = {id:string; context:string; type:'text'|'checkbox'; hint?:string};
-export type Template = {targets:Target[]; format:string; fill:(values:Record<string,string>)=>Promise<Uint8Array>};
+export type PreviewPart = {name:string; rows:string[][]};
+export type Template = {targets:Target[]; format:string; preview?:()=>PreviewPart[]; fill:(values:Record<string,string>)=>Promise<Uint8Array>};
 const token = /\{\{\s*([^{}\n]{1,100}?)\s*\}\}|\[\[\s*([^\[\]\n]{1,100}?)\s*\]\]|(?:\.{3,}|…+|_{3,})/g;
 const word='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const sheet='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -51,6 +52,7 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
  const targets:Target[]=[];
  const changes:Array<(values:Record<string,string>)=>void>=[];
  const docs=new Map<string,Document>();
+ const previews:Array<()=>PreviewPart>=[];
  const add=(context:string,hint?:string)=>{
   if(targets.length>=150)return '';
   const id=String(targets.length+1);
@@ -61,6 +63,8 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
   if(!zip.file('word/document.xml'))throw Error('INVALID_FILE');
   for(const name of names.filter(n=>/^word\/(document|header\d+|footer\d+)\.xml$/.test(n))){
    const doc=xml(await zip.file(name)!.async('string'));docs.set(name,doc);
+   previews.push(()=>({name,rows:elements(doc,word,'p').slice(0,200).map(paragraph=>
+    [elements(paragraph,word,'t').map(node=>node.textContent||'').join('')])}));
    for(const paragraph of elements(doc,word,'p')){
     const nodes=elements(paragraph,word,'t');
     const texts=nodes.map(n=>n.textContent||'');
@@ -101,6 +105,16 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
     const value=elements(cell,sheet,'v')[0]?.textContent||'';
     return cell.getAttribute('t')==='s'?strings[Number(value)]||'':cell.getAttribute('t')==='inlineStr'?elements(cell,sheet,'t').map(n=>n.textContent||'').join(''):value;
    };
+   previews.push(()=>({name,rows:elements(doc,sheet,'row').slice(0,80).map(row=>
+    {
+     const columns:string[]=[];
+     for(const cell of elements(row,sheet,'c')){
+      const letters=/^[A-Z]+/.exec(cell.getAttribute('r')||'')?.[0];
+      const column=letters?[...letters].reduce((index,letter)=>index*26+letter.charCodeAt(0)-64,0)-1:columns.length;
+      if(column<24)columns[column]=read(cell);
+     }
+     return Array.from(columns, value=>value||'');
+    })}));
    for(const cell of cells){
     if(elements(cell,sheet,'f').length)continue;
     const text=read(cell), ref=cell.getAttribute('r')||'';
@@ -124,7 +138,7 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
    }
   }
  }
- return {format,targets,async fill(values){
+ return {format,targets,preview:()=>previews.map(read=>read()),async fill(values){
   changes.forEach(change=>change(values));
   for(const [name,doc] of docs)zip.file(name,new XMLSerializer().serializeToString(doc));
   return zip.generateAsync({type:'uint8array',compression:'DEFLATE'});

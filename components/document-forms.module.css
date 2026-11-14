@@ -37,3 +37,38 @@
  height: .65rem;
  accent-color: #315d4c;
 }
+
+.layout {
+ display: grid;
+ grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+ gap: 1.25rem;
+ align-items: start;
+}
+.formColumn, .preview { min-width: 0; }
+.preview {
+ position: sticky;
+ top: 5rem;
+ padding: 1rem;
+ border: 1px solid #dbe5e0;
+ border-radius: 1rem;
+ background: white;
+}
+.previewHeader { display: grid; gap: .25rem; overflow-wrap: anywhere; }
+.previewHeader h2 { margin: 0; font-size: 1.05rem; }
+.previewHeader small, .previewNote { color: #52645b; }
+.previewNote { margin: .6rem 0; font-size: .84rem; }
+.previewBody, .pdf {
+ width: 100%;
+ height: min(61vh, 700px);
+ border: 1px solid #e0e8e2;
+ border-radius: .5rem;
+ margin-top: .6rem;
+}
+.previewBody { padding: 1rem; overflow: auto; }
+.previewBody p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 .5rem; }
+.previewBody table { border-collapse: collapse; }
+.previewBody td { border: 1px solid #e0e8e2; min-width: 4rem; padding: .4rem; }
+@media (max-width: 850px) {
+ .layout { grid-template-columns: 1fr; }
+ .preview { position: static; grid-row: 1; }
+}

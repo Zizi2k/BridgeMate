@@ -1,8 +1,8 @@
 'use client';
 
-import {useRef,useState,type FormEvent} from 'react';
+import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {Download,FileText,Sparkles} from 'lucide-react';
-import type {Template,Target} from '../lib/document-template';
+import type {Template,Target,PreviewPart} from '../lib/document-template';
 import styles from './document-forms.module.css';
 
 type Field=Target & {label:string;included:boolean};
@@ -15,13 +15,27 @@ const mime:Record<string,string>={
 export default function DocumentForms({lang}:{lang:string}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
  const template=useRef<Template|null>(null);
+ const [preview,setPreview]=useState<PreviewPart[]>([]);
+ const [pdfUrl,setPdfUrl]=useState('');
+ const [part,setPart]=useState(0);
  const [file,setFile]=useState<File|null>(null),[fields,setFields]=useState<Field[]>([]);
  const [values,setValues]=useState<Record<string,string>>({}),[busy,setBusy]=useState(false);
  const [phase,setPhase]=useState<'reading'|'parsing'|'ai'|'export'|null>(null);
  const [percent,setPercent]=useState(0);
  const [status,setStatus]=useState(''),[error,setError]=useState('');
+ useEffect(()=>{
+  if(!file||!file.name.toLowerCase().endsWith('.pdf')||file.size>8*1024*1024)return;
+  let active=true;
+  let url='';
+  void file.slice(0,5).text().then(signature=>{
+   if(!active||signature!=='%PDF-')return;
+   url=URL.createObjectURL(new Blob([file],{type:'application/pdf'}));
+   setPdfUrl(url);
+  }).catch(()=>{});
+  return()=>{active=false;if(url)URL.revokeObjectURL(url)};
+ },[file]);
  function changeFile(next:File|null){
-  template.current=null;setFile(next);setFields([]);setValues({});setStatus('');setError('');
+  template.current=null;setPreview([]);setPdfUrl('');setPart(0);setFile(next);setFields([]);setValues({});setStatus('');setError('');
  }
  async function analyze(){
   if(!file)return;
@@ -30,6 +44,8 @@ export default function DocumentForms({lang}:{lang:string}){
    const {readTemplate}=await import('../lib/document-template');
    const parsed=await readTemplate(file,{onRead:setPercent,onParse:()=>setPhase('parsing')});
    template.current=parsed;
+   setPreview(parsed.preview?.()||[]);
+   setPart(0);
    if(!parsed.targets.length){setStatus('EMPTY');return}
    const initial=parsed.targets.map(target=>({...target,label:target.hint||target.context||target.id,included:true}));
    setFields(initial);
@@ -87,6 +103,7 @@ export default function DocumentForms({lang}:{lang:string}){
  };
  return <section>
   <div className="page-heading"><div><h1>{t('Document forms','Điền biểu mẫu AI')}</h1><p>{t('Upload a template, review its fields, then export a filled copy.','Tải mẫu lên, kiểm tra các trường cần điền và xuất bản đã điền.')}</p></div></div>
+  <div className={styles.layout}><div className={styles.formColumn}>
   <div className={styles.panel}>
    <label className={styles.upload}><FileText size={21}/><span>{t('Template file','Tệp mẫu')} · DOCX / XLSX / PDF · 8 MB</span>
     <input type="file" accept=".docx,.xlsx,.pdf" disabled={busy} onChange={event=>changeFile(event.target.files?.[0]||null)}/>
@@ -115,5 +132,22 @@ export default function DocumentForms({lang}:{lang:string}){
    </fieldset>)}
    <button className="btn primary" disabled={busy||!fields.some(field=>field.included&&values[field.id])}><Download size={17}/>{t('Download filled file','Tải tệp đã điền')}</button>
   </form>}
+  </div>
+  <aside className={styles.preview} aria-label={t('Template preview','Xem trước mẫu')}>
+   <div className={styles.previewHeader}>
+    <h2>{t('Template preview','Xem trước mẫu')}</h2>
+    {file&&<small>{file.name}</small>}
+   </div>
+   {pdfUrl?<><a className={styles.previewNote} href={pdfUrl} target="_blank" rel="noopener noreferrer">{t('Open PDF in a new tab','Mở PDF trong tab mới')}</a><iframe title={t('PDF template preview','Xem trước mẫu PDF')} src={pdfUrl} className={styles.pdf} referrerPolicy="no-referrer"/></>:
+    preview.length>0?<><p className={styles.previewNote}>{t('Original template content. The downloaded file retains its formatting.','Nội dung mẫu gốc. Tệp tải xuống giữ định dạng của mẫu.')}</p>
+    {preview.length>1&&<select aria-label={t('Document part','Phần tài liệu')} value={part} onChange={event=>setPart(Number(event.target.value))}>
+     {preview.map(({name},index)=><option value={index} key={name}>{name.split('/').pop()?.replace(/\.xml$/,'')}</option>)}
+    </select>}
+    <div className={styles.previewBody} tabIndex={0} aria-label={t('Template content','Nội dung mẫu')}>
+     {template.current?.format==='xlsx'?<table><tbody>{preview[part]?.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{cell}</td>)}</tr>)}</tbody></table>:
+      preview[part]?.rows.map((row,index)=><p key={index}>{row[0]||'\u00a0'}</p>)}
+    </div></>:<p className={styles.previewNote}>{file?t('Select Detect fields to preview this template.','Bấm Nhận diện trường để xem nội dung mẫu.'):t('Choose a template to preview it here.','Chọn tệp để xem mẫu tại đây.')}</p>}
+  </aside>
+  </div>
  </section>;
 }
