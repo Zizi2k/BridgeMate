@@ -1,0 +1,11 @@
+.toolbar,.actions {display:flex;flex-wrap:wrap;align-items:end;gap:.65rem;margin-bottom:.8rem}
+.form {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:.75rem;padding:1rem;border:1px solid var(--border);border-radius:1rem;background:var(--surface);margin:1rem 0}
+.form label,.toolbar label {display:grid;gap:.25rem;min-width:0}
+.form input,.form select,.form textarea,.toolbar input,.toolbar select {width:100%;min-width:0;padding:.5rem;border:1px solid var(--border);background:var(--bg);color:var(--heading);border-radius:.45rem;font:inherit}
+.full {grid-column:1/-1}
+.table {overflow:auto;border:1px solid var(--border);border-radius:.75rem;background:var(--surface)}
+.table table {width:100%;border-collapse:collapse}
+.table th,.table td {padding:.7rem;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+.table th,.table tfoot {background:var(--soft)}
+.table td:nth-child(2) {min-width:10rem;white-space:pre-wrap;overflow-wrap:anywhere}
+.table td:nth-child(n+3) {white-space:nowrap}

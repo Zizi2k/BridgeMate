@@ -34,3 +34,7 @@ export const accountAccess=mysqlTable('account_access',{
  userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),
  suspended:int('suspended').notNull().default(0),
 });
+
+export const payrollEntries=mysqlTable('payroll_entries',{
+ id:id().primaryKey(),scopeId:varchar('scope_id',{length:48}).notNull(),data:json('data').notNull(),
+},t=>[index('payroll_scope_idx').on(t.scopeId)]);

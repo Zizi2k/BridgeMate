@@ -1,3 +1,4 @@
+import {payrollData} from '../../../lib/payroll';
 import {accountRole} from "../../../lib/account-role";
 import {personalData,validDay} from '../../../lib/personal-workspace';
 import {rankTeam,completionRecipients,POINTS_PER_TASK} from '../../../lib/ranking';
@@ -9,7 +10,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries} from '../../../db/schema';
 import {and,eq,gt,desc,sql} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -84,6 +85,38 @@ async function handle(req:Request){
     if(value)await tx.delete(sessions).where(eq(sessions.userId,target.id));
    });
    return ok({suspended:!!value});
+  }
+  throw new ApiError('NOT_FOUND',404);
+ }
+ if(path[0]==='payroll'){
+  const [,scope,entryId,...extra]=path;
+  check(scope&&extra.length===0,'NOT_FOUND',404);
+  check(!user.demo,'FORBIDDEN',403);
+  if(scope!=='me'){
+   const team=await teamAccess(scope);
+   check(team.ownerId===user.id||team.leaderId===user.id,'FORBIDDEN',403);
+  }
+  const scopeId=scope==='me'?'user:'+user.id:'team:'+scope;
+  const owned=eq(payrollEntries.scopeId,scopeId);
+  if(method==='GET'&&!entryId){
+   const rows=await db.select({id:payrollEntries.id,data:payrollEntries.data}).from(payrollEntries).where(owned);
+   return ok(rows.map(row=>({...row.data as object,id:row.id})));
+  }
+  if(method==='POST'&&!entryId){
+   const data=payrollData(body);check(data);
+   const id=uid();
+   await db.insert(payrollEntries).values({id,scopeId,data});
+   return ok({...data,id},201);
+  }
+  if(entryId&&(method==='PATCH'||method==='DELETE')){
+   const where=and(owned,eq(payrollEntries.id,entryId));
+   if(method==='DELETE'){
+    const [result]=await db.delete(payrollEntries).where(where);
+    check(result.affectedRows,'NOT_FOUND',404);return ok(null);
+   }
+   const data=payrollData(body);check(data);
+   const [result]=await db.update(payrollEntries).set({data}).where(where);
+   check(result.affectedRows,'NOT_FOUND',404);return ok({...data,id:entryId});
   }
   throw new ApiError('NOT_FOUND',404);
  }
