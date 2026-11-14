@@ -154,3 +154,13 @@ The supplied BridgeMate logo is used in the public header, workspace sidebar, lo
 ## Kho liên kết và Kế hoạch ngày
 
 Đăng nhập BridgeMate, sau đó mở **Kho liên kết** hoặc **Kế hoạch ngày** trong thanh điều hướng. Dữ liệu cá nhân được lưu theo tài khoản BridgeMate trong MySQL, tách khỏi dữ liệu của nhóm và của tài khoản khác. Chạy `npm run db:migrate` trên cơ sở dữ liệu BridgeMate trước khi bật phiên bản mới. Render cũng áp dụng migration qua lệnh `prestart` hiện có. Hai mục chạy trong cùng website BridgeMate và dùng cấu hình triển khai của BridgeMate.
+
+## Điền biểu mẫu AI
+
+Đăng nhập và chọn **Điền biểu mẫu AI**. Tải tệp tối đa 8 MB, bấm **Nhận diện trường**, kiểm tra nhãn, nhập dữ liệu và tải bản đã điền cùng định dạng. Module dùng cấu hình AI và hạn mức sẵn có của BridgeMate.
+
+- DOCX: nhận diện dấu chấm, dấu gạch dưới, `{{Tên trường}}` và `[[Tên trường]]` trong nội dung, bảng, đầu trang và chân trang.
+- XLSX: nhận diện dấu giữ chỗ và ô trống đã định dạng ngay sau nhãn kết thúc bằng dấu hai chấm. Ô chứa công thức được giữ nguyên.
+- PDF: hỗ trợ ô văn bản và ô đánh dấu tương tác (AcroForm). PDF scan, PDF phẳng và XFA chưa hỗ trợ.
+
+Tệp gốc và dữ liệu nhập được xử lý trong trình duyệt. AI chỉ nhận các đoạn ngắn quanh vị trí cần điền thông qua API đang cấu hình. Có thể nhập thủ công nếu AI tạm thời không khả dụng. Văn bản dài có thể làm Word tự xuống dòng hoặc đổi trang theo bố cục mẫu.

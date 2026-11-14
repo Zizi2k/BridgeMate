@@ -1,0 +1,16 @@
+.panel {
+ display: grid;
+ gap: .8rem;
+ padding: 1rem;
+ min-width: 0;
+ background: white;
+ border: 1px solid #dbe5e0;
+ border-radius: 1rem;
+}
+.panel label, .fields { display: grid; gap: .5rem; }
+.panel .inline { display: flex; gap: .5rem; align-items: center; }
+.upload span { font-weight: 650; }
+.panel p, .panel small { color: #52645b; overflow-wrap: anywhere; }
+.panel input:not([type=checkbox]) { width: 100%; min-width: 0; padding: .55rem; border: 1px solid #cad9d1; border-radius: .5rem; }
+.panel button, .fields button { justify-self: start; }
+.fields { margin-top: .75rem; gap: 1rem; }
