@@ -15,10 +15,23 @@ function xml(source:string){
 }
 const entries = (text:string)=>Array.from(text.matchAll(token));
 
-export async function readTemplate(file:File):Promise<Template>{
+export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>void;onParse:()=>void}):Promise<Template>{
  const format=file.name.split('.').pop()?.toLowerCase()||'';
  if(!['docx','xlsx','pdf'].includes(format)||file.size>8*1024*1024)throw Error('INVALID_FILE');
- const bytes=await file.arrayBuffer();
+ const bytes=hooks?await new Promise<ArrayBuffer>((resolve,reject)=>{
+  const reader=new FileReader();
+  reader.onprogress=event=>{
+   if(event.lengthComputable&&event.total>0)hooks.onRead(Math.floor(100*event.loaded/event.total));
+  };
+  reader.onload=()=>resolve(reader.result as ArrayBuffer);
+  reader.onerror=()=>reject(reader.error);
+  reader.onabort=()=>reject(Error('READ_ABORTED'));
+  reader.readAsArrayBuffer(file);
+ }):await file.arrayBuffer();
+ if(hooks){
+  hooks.onParse();
+  await new Promise<void>(resolve=>setTimeout(resolve,0));
+ }
  if(format==='pdf')return readPdf(bytes);
  const zip=await JSZip.loadAsync(bytes);
  const names=Object.keys(zip.files);

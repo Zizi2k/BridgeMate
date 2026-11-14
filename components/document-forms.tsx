@@ -17,20 +17,23 @@ export default function DocumentForms({lang}:{lang:string}){
  const template=useRef<Template|null>(null);
  const [file,setFile]=useState<File|null>(null),[fields,setFields]=useState<Field[]>([]);
  const [values,setValues]=useState<Record<string,string>>({}),[busy,setBusy]=useState(false);
+ const [phase,setPhase]=useState<'reading'|'parsing'|'ai'|'export'|null>(null);
+ const [percent,setPercent]=useState(0);
  const [status,setStatus]=useState(''),[error,setError]=useState('');
  function changeFile(next:File|null){
   template.current=null;setFile(next);setFields([]);setValues({});setStatus('');setError('');
  }
  async function analyze(){
   if(!file)return;
-  setBusy(true);setError('');setStatus('');setFields([]);setValues({});
+  setBusy(true);setPhase('reading');setPercent(0);setError('');setStatus('');setFields([]);setValues({});
   try{
    const {readTemplate}=await import('../lib/document-template');
-   const parsed=await readTemplate(file);
+   const parsed=await readTemplate(file,{onRead:setPercent,onParse:()=>setPhase('parsing')});
    template.current=parsed;
    if(!parsed.targets.length){setStatus('EMPTY');return}
    const initial=parsed.targets.map(target=>({...target,label:target.hint||target.context||target.id,included:true}));
    setFields(initial);
+   setPhase('ai');
    // Only short surrounding excerpts are needed for AI naming.
    const context=JSON.stringify(parsed.targets.slice(0,28).map(({id,context})=>({id,context:context.slice(0,125)})));
    try{
@@ -53,13 +56,13 @@ export default function DocumentForms({lang}:{lang:string}){
     setStatus(initial.length>28?'PARTIAL':'READY');
    }catch{setStatus('FALLBACK')}
   }catch{setError('READ')}
-  finally{setBusy(false)}
+  finally{setBusy(false);setPhase(null)}
  }
 
  async function download(event:FormEvent<HTMLFormElement>){
   event.preventDefault();
   if(!template.current||!file)return;
-  setBusy(true);setError('');
+  setBusy(true);setPhase('export');setError('');
   try{
    const {readTemplate}=await import('../lib/document-template');
    const original=await readTemplate(file);
@@ -70,8 +73,12 @@ export default function DocumentForms({lang}:{lang:string}){
    link.href=url;link.download=file.name.replace(/\.[^.]+$/,'')+'-filled.'+original.format;
    link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }catch{setError('EXPORT')}
-  finally{setBusy(false)}
+  finally{setBusy(false);setPhase(null)}
  }
+ const phaseLabel=phase==='reading'?t('Reading file','Đang đọc tệp'):
+  phase==='parsing'?t('Finding fillable fields','Đang tìm các trường cần điền'):
+  phase==='ai'?t('AI is naming fields','AI đang đặt tên trường'):
+  t('Preparing download','Đang chuẩn bị tệp tải xuống');
  const messages:Record<string,string>={
   EMPTY:t('No fillable fields found. For Word or Excel, mark blanks with {{Field name}}. For PDF, use an interactive form.','Chưa tìm thấy trường điền. Với Word hoặc Excel, đánh dấu vị trí bằng {{Tên trường}}. Với PDF, hãy dùng mẫu có ô nhập tương tác.'),
   READY:t('Review the suggested labels and enter your values.','Kiểm tra tên trường gợi ý rồi nhập dữ liệu.'),
@@ -84,10 +91,16 @@ export default function DocumentForms({lang}:{lang:string}){
    <label className={styles.upload}><FileText size={21}/><span>{t('Template file','Tệp mẫu')} · DOCX / XLSX / PDF · 8 MB</span>
     <input type="file" accept=".docx,.xlsx,.pdf" disabled={busy} onChange={event=>changeFile(event.target.files?.[0]||null)}/>
    </label>
+   {phase&&<div className={styles.progressBlock}>
+    <div className={styles.progressHeading}>
+     <span role="status">{phaseLabel}</span>
+     {phase==='reading'&&<span aria-hidden="true">{percent}%</span>}
+    </div>
+    <progress className={styles.progress} aria-label={phaseLabel} max={100} value={phase==='reading'?percent:undefined}/>
+   </div>}
    <p>{t('Detection sends short excerpts around candidate fields to the configured AI provider. Your file and entered values are processed in your browser.','Khi nhận diện, hệ thống gửi đoạn văn bản ngắn quanh vị trí cần điền đến AI. Tệp và dữ liệu bạn nhập được xử lý trong trình duyệt.')}</p>
    <button className="btn primary" disabled={!file||busy} onClick={()=>void analyze()}><Sparkles size={16}/>{t('Detect fields','Nhận diện trường')}</button>
   </div>
-  {busy&&<p role="status">{t('Processing…','Đang xử lý…')}</p>}
   {status&&<p role="status">{messages[status]}</p>}
   {error&&<p role="alert">{error==='EXPORT'?t('Export failed. Check field lengths and try again.','Xuất tệp thất bại. Kiểm tra độ dài dữ liệu rồi thử lại.'):t('Unable to read the template. Check its format and file size.','Không đọc được mẫu. Kiểm tra định dạng và dung lượng tệp.')}</p>}
   {fields.length>0&&<form className={styles.fields} onSubmit={download}>

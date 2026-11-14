@@ -14,3 +14,26 @@
 .panel input:not([type=checkbox]) { width: 100%; min-width: 0; padding: .55rem; border: 1px solid #cad9d1; border-radius: .5rem; }
 .panel button, .fields button { justify-self: start; }
 .fields { margin-top: .75rem; gap: 1rem; }
+
+.progressBlock {
+ display: grid;
+ gap: .5rem;
+ padding: .8rem;
+ border-radius: .65rem;
+ background: #edf4ef;
+ color: #284e3e;
+}
+.progressHeading {
+ display: flex;
+ justify-content: space-between;
+ align-items: center;
+ gap: .75rem;
+ font-size: .875rem;
+ font-weight: 650;
+ font-variant-numeric: tabular-nums;
+}
+.progress {
+ width: 100%;
+ height: .65rem;
+ accent-color: #315d4c;
+}
