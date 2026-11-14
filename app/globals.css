@@ -306,3 +306,26 @@
  --bm-dark-color-325c48: #bad9ca;
  --bm-dark-color-52645b: #c4cfc9;
 }
+
+.pay-slip-controls{display:flex;flex-wrap:wrap;align-items:end;gap:1rem;margin-bottom:1rem}
+.pay-slip-controls label{display:grid;gap:.25rem}
+.pay-slip-page{max-width:210mm;margin:auto;padding:12mm;background:white;color:#111;font:12pt "Times New Roman",serif;overflow-wrap:anywhere}
+.pay-slip-page p{margin:.35rem 0}
+.pay-slip-page h2,.pay-slip-center{text-align:center;color:#111}
+.pay-slip-page table{width:100%;border-collapse:collapse;margin-top:1rem}
+.pay-slip-page table th,.pay-slip-page table td{border:1px solid #111;padding:.4rem .5rem}
+.pay-slip-page table th[scope=row]{text-align:left}
+.pay-slip-page footer{display:flex;justify-content:space-around;gap:1rem;margin-top:1.25rem;padding-bottom:2.5rem}
+@media print{
+ @page{size:A4;margin:12mm}
+ body:has(.pay-slip-page) .sidebar,
+ body:has(.pay-slip-page) .topbar,
+ body:has(.pay-slip-page) .page-heading,
+ body:has(.pay-slip-page) .pay-slip-controls,
+ body:has(.pay-slip-page) .content > :not(:has(.pay-slip-page)),
+ body:has(.pay-slip-page) .content section > :not(:has(.pay-slip-page)):not(.pay-slip),
+ body:has(.pay-slip-page) .main-shell > footer{display:none!important}
+ body:has(.pay-slip-page),body:has(.pay-slip-page) .main-shell{margin:0!important;background:white!important;color:#111!important}
+ body:has(.pay-slip-page) .content,.pay-slip-page{padding:0!important}
+ .pay-slip-page tr{break-inside:avoid}
+}

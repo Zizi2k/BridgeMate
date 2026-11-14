@@ -170,3 +170,9 @@ Tệp gốc và dữ liệu nhập được xử lý trong trình duyệt. AI ch
 Chạy migration trước khi dùng bản mới. Để cấp quyền quản trị, tra UUID tài khoản đã đăng ký bằng MySQL với `SELECT id, email FROM users WHERE demo = 0;`, rồi đặt `BRIDGEMATE_ADMIN_IDS` ở backend bằng UUID đã xác nhận. Có thể thêm nhiều UUID, phân cách bằng dấu phẩy. Đặt biến ở Render nếu Vercel chuyển tiếp API sang Render, hoặc ở Vercel nếu Vercel chạy API trực tiếp. Triển khai lại nơi đã đổi cấu hình.
 
 Quản trị viên mở **Quản trị tài khoản** để khóa và mở khóa tài khoản thường. Khi khóa, các phiên đang lưu của tài khoản bị thu hồi. Quyền trong nhóm và quyền sở hữu dữ liệu cá nhân được kiểm tra độc lập với vai trò quản trị.
+
+### Duyệt tính năng và phiếu lương
+
+Tài khoản thường cần admin duyệt riêng từng mục **Kho liên kết**, **Lương cá nhân**, **Lương nhóm**. Quyền xem lương nhóm còn yêu cầu vai trò chủ nhóm hoặc trưởng nhóm. Admin vào **Quản trị tài khoản** để duyệt, từ chối, thu hồi hoặc xóa tài khoản. Xóa tài khoản thu hồi phiên và ngăn đăng nhập, giữ liên kết lịch sử công việc trong cơ sở dữ liệu.
+
+Quản trị viên sửa thông tin công ty và nhãn trường tại **Mẫu in phiếu lương và phiếu tạm ứng**. Trong bảng lương, có thể in theo dòng hoặc theo tổng từng người trong tháng ở bảng nhóm. Phụ cấp, bảo hiểm và thuế nhập khi in chỉ tác động phiếu hiện tại. Trình duyệt hỗ trợ in A4 hoặc lưu PDF.

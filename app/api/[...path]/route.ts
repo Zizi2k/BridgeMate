@@ -1,3 +1,4 @@
+import {isModule,printDefaults,validatePrintTemplate,type Module} from '../../../lib/module-access';
 import {payrollData} from '../../../lib/payroll';
 import {accountRole} from "../../../lib/account-role";
 import {personalData,validDay} from '../../../lib/personal-workspace';
@@ -10,8 +11,8 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries} from '../../../db/schema';
-import {and,eq,gt,desc,sql} from 'drizzle-orm';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts} from '../../../db/schema';
+import {and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
 export const dynamic='force-dynamic';
@@ -29,9 +30,10 @@ async function handle(req:Request){
  const ok=(data:any,status=200,headers:Record<string,string>={})=>Response.json({data},{status,headers:{'Cache-Control':'no-store',...headers}});
  const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('bm_session='))?.slice(11);
  const suspended=async (id:string)=>!!(await db.select({suspended:accountAccess.suspended}).from(accountAccess).where(eq(accountAccess.userId,id)).limit(1))[0]?.suspended;
+ const removed=async(id:string)=>!!(await db.select({id:removedAccounts.userId}).from(removedAccounts).where(eq(removedAccounts.userId,id)).limit(1))[0];
  let user:any=null;
  if(token){const s=await db.select().from(sessions).where(and(eq(sessions.id,token),gt(sessions.expires,Date.now()))).limit(1).then(rows=>rows[0]);if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).limit(1).then(rows=>rows[0])}
- if(user&&await suspended(user.id))user=null;
+ if(user&&(await suspended(user.id)||await removed(user.id)))user=null;
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
@@ -46,7 +48,7 @@ async function handle(req:Request){
    const email=str(body.email,254).toLowerCase(),password=str(body.password,128);check(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
    const u=await db.select().from(users).where(eq(users.email,email)).limit(1).then(rows=>rows[0]);
    if(path[1]==='register'){check(password.length>=8);check(!u,'EMAIL_EXISTS',409);const n={id:uid(),name:str(body.name,80),email,password:await hash(password),demo:0};await db.insert(users).values(n);return session(n)}
-   check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);check(!await suspended(u.id),'ACCOUNT_SUSPENDED',403);return session(u);
+   check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);check(!await suspended(u.id)&&!await removed(u.id),'ACCOUNT_SUSPENDED',403);return session(u);
   }
   if(path[1]==='demo'&&method==='POST'){
    if(user)return ok(await userSummary(user));
@@ -64,21 +66,72 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
  check(user,'UNAUTHORIZED',401);
+ const admin=accountRole(user)==='admin';
+ const approved=async (module:Module)=> admin||!user.demo&&(await db.select({status:moduleApprovals.status})
+  .from(moduleApprovals).where(and(eq(moduleApprovals.userId,user.id),eq(moduleApprovals.module,module))).limit(1))[0]?.status==='approved';
+ if(path[0]==='access'&&path.length===1){
+  if(method==='GET'){
+   const rows=await db.select({module:moduleApprovals.module,status:moduleApprovals.status}).from(moduleApprovals).where(eq(moduleApprovals.userId,user.id));
+   return ok({admin,permissions:Object.fromEntries(rows.map(row=>[row.module,row.status]))});
+  }
+  if(method==='POST'){
+   check(!user.demo,'FORBIDDEN',403);
+   check(isModule(body.module));
+   const module=body.module;
+   await db.insert(moduleApprovals).values({userId:user.id,module,status:'pending'}).onDuplicateKeyUpdate({
+    set:{status:sql`CASE WHEN ${moduleApprovals.status} = 'approved' THEN 'approved' ELSE 'pending' END`},
+   });
+   return ok(null);
+  }
+ }
+ if(path[0]==='payroll-template'&&path.length===1){
+  if(method==='GET'){
+   check(await approved('payroll-personal')||await approved('payroll-team'),'APPROVAL_REQUIRED',403);
+   const [row]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
+   return ok({...printDefaults,...row?.data as object});
+  }
+  if(method==='PATCH'){
+   check(admin,'FORBIDDEN',403);
+   const data=validatePrintTemplate(body);check(data);
+   await db.insert(printSettings).values({id:'payroll',data}).onDuplicateKeyUpdate({set:{data}});
+   return ok(data);
+  }
+ }
+
  if(path[0]==='admin'){
-  check(accountRole(user)==='admin','FORBIDDEN',403);
+  check(admin,'FORBIDDEN',403);
   if(path[1]==='accounts'&&path.length===2&&method==='GET'){
    const page=Number(url.searchParams.get('page')||1);
    check(Number.isSafeInteger(page)&&page>=1&&page<=10000);
    const rows=await db.select({id:users.id,name:users.name,email:users.email,demo:users.demo,suspended:accountAccess.suspended})
     .from(users).leftJoin(accountAccess,eq(users.id,accountAccess.userId))
-    .where(eq(users.demo,0)).orderBy(users.email).limit(26).offset((page-1)*25);
-   return ok({rows:rows.slice(0,25).map(row=>({...publicUser(row),suspended:!!row.suspended})),hasMore:rows.length>25});
+    .leftJoin(removedAccounts,eq(users.id,removedAccounts.userId))
+    .where(and(eq(users.demo,0),isNull(removedAccounts.userId))).orderBy(users.email).limit(26).offset((page-1)*25);
+   const visible=rows.slice(0,25);
+   const permissions=visible.length?await db.select().from(moduleApprovals).where(inArray(moduleApprovals.userId,visible.map(row=>row.id))):[];
+   return ok({rows:visible.map(row=>({...publicUser(row),suspended:!!row.suspended,permissions:Object.fromEntries(
+    permissions.filter(item=>item.userId===row.id).map(item=>[item.module,item.status]))})),hasMore:rows.length>25});
   }
-  if(path[1]==='accounts'&&path.length===3&&method==='PATCH'){
-   check(typeof body.suspended==='boolean');
+  if(path[1]==='accounts'&&path.length===3&&(method==='PATCH'||method==='DELETE')){
    const [target]=await db.select({id:users.id,demo:users.demo}).from(users).where(eq(users.id,path[2])).limit(1);
    check(target&&!target.demo,'NOT_FOUND',404);
    check(accountRole(target)!=='admin','FORBIDDEN',403);
+   if(method==='DELETE'){
+    await db.transaction(async tx=>{
+     await tx.insert(removedAccounts).values({userId:target.id}).onDuplicateKeyUpdate({set:{userId:target.id}});
+     await tx.delete(sessions).where(eq(sessions.userId,target.id));
+     await tx.delete(moduleApprovals).where(eq(moduleApprovals.userId,target.id));
+    });
+    return ok(null);
+   }
+   check(!await removed(target.id),'NOT_FOUND',404);
+   if('module' in body){
+    check(isModule(body.module)&&(body.status==='approved'||body.status==='denied'));
+    await db.insert(moduleApprovals).values({userId:target.id,module:body.module,status:body.status})
+     .onDuplicateKeyUpdate({set:{status:body.status}});
+    return ok(null);
+   }
+   check(typeof body.suspended==='boolean');
    const value=body.suspended?1:0;
    await db.transaction(async tx=>{
     await tx.insert(accountAccess).values({userId:target.id,suspended:value}).onDuplicateKeyUpdate({set:{suspended:value}});
@@ -92,6 +145,7 @@ async function handle(req:Request){
   const [,scope,entryId,...extra]=path;
   check(scope&&extra.length===0,'NOT_FOUND',404);
   check(!user.demo,'FORBIDDEN',403);
+  check(await approved(scope==='me'?'payroll-personal':'payroll-team'),'APPROVAL_REQUIRED',403);
   if(scope!=='me'){
    const team=await teamAccess(scope);
    check(team.ownerId===user.id||team.leaderId===user.id,'FORBIDDEN',403);
@@ -123,6 +177,7 @@ async function handle(req:Request){
  if(path[0]==='personal'){
   const [,kind,entryId,...extra]=path;
   check((kind==='links'||kind==='tasks')&&extra.length===0,'NOT_FOUND',404);
+  if(kind==='links')check(await approved('links'),'APPROVAL_REQUIRED',403);
   const owned=and(eq(personalEntries.userId,user.id),eq(personalEntries.kind,kind));
   if(method==='GET'&&!entryId){
    const day=url.searchParams.get('date')||'';

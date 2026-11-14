@@ -38,3 +38,12 @@ export const accountAccess=mysqlTable('account_access',{
 export const payrollEntries=mysqlTable('payroll_entries',{
  id:id().primaryKey(),scopeId:varchar('scope_id',{length:48}).notNull(),data:json('data').notNull(),
 },t=>[index('payroll_scope_idx').on(t.scopeId)]);
+
+export const moduleApprovals=mysqlTable('module_approvals',{
+ userId:id('user_id').notNull().references(()=>users.id,{onDelete:'cascade'}),
+ module:varchar('module',{length:24}).notNull(),status:varchar('status',{length:12}).notNull(),
+},t=>[primaryKey({columns:[t.userId,t.module]})]);
+export const printSettings=mysqlTable('print_settings',{id:id().primaryKey(),data:json('data').notNull()});
+export const removedAccounts=mysqlTable('removed_accounts',{
+ userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),
+});
