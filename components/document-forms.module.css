@@ -72,3 +72,39 @@
  .layout { grid-template-columns: 1fr; }
  .preview { position: static; grid-row: 1; }
 }
+
+.markers { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin: .2rem .3rem; }
+.marker {
+ padding: .2rem .45rem;
+ border: 1px dashed #6a997f;
+ border-radius: .3rem;
+ background: #eef6ef;
+ color: #264f3b;
+ font: inherit;
+ font-size: .78rem;
+ text-align: left;
+ overflow-wrap: anywhere;
+}
+.marker[aria-pressed=true] { outline: 2px solid #315d4c; outline-offset: 2px; }
+.inlineField {
+ display: inline-grid;
+ vertical-align: middle;
+ gap: .15rem;
+ margin: .15rem .25rem;
+ padding: .2rem .35rem;
+ max-width: 100%;
+ border: 1px dashed #6a997f;
+ border-radius: .3rem;
+ background: #eef6ef;
+ color: #264f3b;
+ font-size: .75rem;
+}
+.inlineField input {
+ width: 8rem;
+ max-width: 100%;
+ padding: .2rem .35rem;
+ border: 1px solid #a4b9ab;
+ border-radius: .25rem;
+ font: inherit;
+}
+.inlineField:focus-within { outline: 2px solid #315d4c; }

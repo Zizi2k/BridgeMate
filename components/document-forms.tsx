@@ -1,11 +1,11 @@
 'use client';
 
-import {useEffect,useRef,useState,type FormEvent} from 'react';
+import {useEffect,useRef,useState,type FormEvent,type KeyboardEvent} from 'react';
 import {Download,FileText,Sparkles} from 'lucide-react';
-import type {Template,Target,PreviewPart} from '../lib/document-template';
+import type {Template,Target,PreviewPart,Location} from '../lib/document-template';
 import styles from './document-forms.module.css';
 
-type Field=Target & {label:string;included:boolean};
+type Field=Target & {label:string;included:boolean;manual?:boolean};
 const mime:Record<string,string>={
  docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
  xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -75,6 +75,73 @@ export default function DocumentForms({lang}:{lang:string}){
   finally{setBusy(false);setPhase(null)}
  }
 
+ const [selected,setSelected]=useState('');
+ const inlineInputs=useRef(new Map<string,HTMLInputElement>());
+ const valueInputs=useRef(new Map<string,HTMLInputElement>());
+ function focusField(id:string){
+  setSelected(id);
+  requestAnimationFrame(()=>(inlineInputs.current.get(id)||valueInputs.current.get(id))?.focus());
+ }
+ function nextField(event:KeyboardEvent<HTMLInputElement>,id:string){
+  if(event.key!=='Enter'||event.nativeEvent.isComposing)return;
+  event.preventDefault();
+  const enabled=fields.filter(field=>field.included);
+  const next=enabled[enabled.findIndex(field=>field.id===id)+1];
+  if(next){
+   const index=preview.findIndex(item=>item.name===next.location?.part);
+   if(index>=0)setPart(index);
+   focusField(next.id);
+  }
+ }
+ async function addAt(location:Location,text:string){
+  const source=template.current;
+  if(!source?.addField||busy)return;
+  const proposed=text.trim().replace(/[:：]$/,'').slice(0,100)||t('New field','Trường mới');
+  setBusy(true);
+  try{
+   let suggested=proposed;
+   if(text.trim()){
+    try{
+     const result=await fetch('/api/ai/assist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      action:'ask',targetLanguage:lang==='vi'?'vi':'en',
+      text:'Suggest a concise label for a value to be entered at the end of the given context. Return only the label.',
+      context:text.slice(0,180),
+     })});
+     if(result.ok){
+      const payload=await result.json();
+      if(typeof payload.data?.text==='string')suggested=payload.data.text.trim().slice(0,120)||proposed;
+     }
+    }catch{}
+   }
+   const label=window.prompt(t('Confirm the field name for this position','Xác nhận tên trường tại vị trí này'),suggested)?.trim().slice(0,120);
+   if(!label)return;
+   const target=source.addField(location,label);
+   if(!target)return;
+   setFields(current=>[...current,{...target,label,included:true,manual:true}]);
+   setStatus('READY');
+   setSelected(target.id);
+   requestAnimationFrame(()=>focusField(target.id));
+  }finally{setBusy(false)}
+ }
+ function previewCell(cell:PreviewPart['rows'][number][number],row:number,column:number){
+  const location={part:preview[part].name,row,column};
+  const matching=fields.filter(field=>field.location?.part===location.part&&field.location.row===row&&field.location.column===column);
+  let cursor=0;
+  return <>{matching.map(field=>{
+   const span=field.span||{start:cell.text.length,end:cell.text.length};
+   const before=cell.text.slice(cursor,span.start);
+   cursor=span.end;
+   return <span key={field.id}>{before}<label className={styles.inlineField} data-selected={selected===field.id}>
+    <span>{field.label||t('Unnamed field','Trường chưa đặt tên')}</span>
+    <input value={values[field.id]||''} maxLength={1000} disabled={busy||!field.included}
+     ref={node=>{if(node)inlineInputs.current.set(field.id,node);else inlineInputs.current.delete(field.id)}}
+     onFocus={()=>setSelected(field.id)} onKeyDown={event=>nextField(event,field.id)}
+     onChange={event=>{const value=event.target.value;setValues(current=>({...current,[field.id]:value}))}}/>
+   </label></span>;
+  })}{cell.text.slice(cursor)||(!matching.length?'\u00a0':'')}
+   {cell.editable&&!matching.length&&<button type="button" className={styles.marker} disabled={busy} onClick={()=>void addAt(location,cell.text)}>{t('+ Add field','+ Thêm trường')}</button>}
+  </>;
+ }
  async function download(event:FormEvent<HTMLFormElement>){
   event.preventDefault();
   if(!template.current||!file)return;
@@ -82,6 +149,9 @@ export default function DocumentForms({lang}:{lang:string}){
   try{
    const {readTemplate}=await import('../lib/document-template');
    const original=await readTemplate(file);
+   for(const field of fields){
+    if(field.manual&&field.location&&!original.addField?.(field.location,field.label))throw Error('EXPORT');
+   }
    const output=await original.fill(Object.fromEntries(fields.filter(field=>field.included&&values[field.id]!==undefined)
     .map(field=>[field.id,values[field.id]])));
    const url=URL.createObjectURL(new Blob([Uint8Array.from(output)],{type:mime[original.format]}));
@@ -122,13 +192,13 @@ export default function DocumentForms({lang}:{lang:string}){
   {error&&<p role="alert">{error==='EXPORT'?t('Export failed. Check field lengths and try again.','Xuất tệp thất bại. Kiểm tra độ dài dữ liệu rồi thử lại.'):t('Unable to read the template. Check its format and file size.','Không đọc được mẫu. Kiểm tra định dạng và dung lượng tệp.')}</p>}
   {fields.length>0&&<form className={styles.fields} onSubmit={download}>
    {fields.map((field,index)=><fieldset key={field.id} className={styles.panel} disabled={busy}>
-    <legend>{t('Field','Trường')} {index+1}</legend>
+    <legend>{field.label||t('Field','Trường')} · {index+1}</legend>
     <label className={styles.inline}><input type="checkbox" checked={field.included} onChange={event=>{const included=event.target.checked;setFields(current=>current.map(row=>row.id===field.id?{...row,included}:row))}}/>{t('Include in export','Điền khi xuất tệp')}</label>
     <label>{t('Field name','Tên trường')}<input value={field.label} maxLength={120} onChange={event=>{const label=event.target.value;setFields(current=>current.map(row=>row.id===field.id?{...row,label}:row))}}/></label>
     <small>{field.context}</small>
     {field.type==='checkbox'?
-     <label className={styles.inline}><input type="checkbox" disabled={!field.included} checked={values[field.id]==='true'} onChange={event=>{const value=String(event.target.checked);setValues(current=>({...current,[field.id]:value}))}}/>{field.label}</label>:
-     <label>{t('Value','Dữ liệu điền')}<input disabled={!field.included} value={values[field.id]||''} maxLength={1000} onChange={event=>{const value=event.target.value;setValues(current=>({...current,[field.id]:value}))}}/></label>}
+     <label className={styles.inline}><input type="checkbox" disabled={!field.included} ref={node=>{if(node)valueInputs.current.set(field.id,node);else valueInputs.current.delete(field.id)}} onKeyDown={event=>nextField(event,field.id)} checked={values[field.id]==='true'} onChange={event=>{const value=String(event.target.checked);setValues(current=>({...current,[field.id]:value}))}}/>{field.label}</label>:
+     <label>{t('Value','Dữ liệu điền')}<input disabled={!field.included} ref={node=>{if(node)valueInputs.current.set(field.id,node);else valueInputs.current.delete(field.id)}} onKeyDown={event=>nextField(event,field.id)} value={values[field.id]||''} maxLength={1000} onChange={event=>{const value=event.target.value;setValues(current=>({...current,[field.id]:value}))}}/></label>}
    </fieldset>)}
    <button className="btn primary" disabled={busy||!fields.some(field=>field.included&&values[field.id])}><Download size={17}/>{t('Download filled file','Tải tệp đã điền')}</button>
   </form>}
@@ -139,13 +209,13 @@ export default function DocumentForms({lang}:{lang:string}){
     {file&&<small>{file.name}</small>}
    </div>
    {pdfUrl?<><a className={styles.previewNote} href={pdfUrl} target="_blank" rel="noopener noreferrer">{t('Open PDF in a new tab','Mở PDF trong tab mới')}</a><iframe title={t('PDF template preview','Xem trước mẫu PDF')} src={pdfUrl} className={styles.pdf} referrerPolicy="no-referrer"/></>:
-    preview.length>0?<><p className={styles.previewNote}>{t('Original template content. The downloaded file retains its formatting.','Nội dung mẫu gốc. Tệp tải xuống giữ định dạng của mẫu.')}</p>
+    preview.length>0?<><p className={styles.previewNote}>{t('Type directly in the outlined fields, or add a field at an available position.','Nhập trực tiếp vào ô có khung hoặc thêm trường tại vị trí khả dụng.')}</p>
     {preview.length>1&&<select aria-label={t('Document part','Phần tài liệu')} value={part} onChange={event=>setPart(Number(event.target.value))}>
      {preview.map(({name},index)=><option value={index} key={name}>{name.split('/').pop()?.replace(/\.xml$/,'')}</option>)}
     </select>}
     <div className={styles.previewBody} tabIndex={0} aria-label={t('Template content','Nội dung mẫu')}>
-     {template.current?.format==='xlsx'?<table><tbody>{preview[part]?.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{cell}</td>)}</tr>)}</tbody></table>:
-      preview[part]?.rows.map((row,index)=><p key={index}>{row[0]||'\u00a0'}</p>)}
+     {template.current?.format==='xlsx'?<table><tbody>{preview[part]?.rows.map((row,index)=><tr key={index}>{row.map((cell,column)=><td key={column}>{previewCell(cell,index,column)}</td>)}</tr>)}</tbody></table>:
+      preview[part]?.rows.map((row,index)=><p key={index}>{previewCell(row[0],index,0)}</p>)}
     </div></>:<p className={styles.previewNote}>{file?t('Select Detect fields to preview this template.','Bấm Nhận diện trường để xem nội dung mẫu.'):t('Choose a template to preview it here.','Chọn tệp để xem mẫu tại đây.')}</p>}
   </aside>
   </div>

@@ -2,9 +2,11 @@ import JSZip from 'jszip';
 import { PDFDocument, PDFTextField, PDFCheckBox } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
-export type Target = {id:string; context:string; type:'text'|'checkbox'; hint?:string};
-export type PreviewPart = {name:string; rows:string[][]};
-export type Template = {targets:Target[]; format:string; preview?:()=>PreviewPart[]; fill:(values:Record<string,string>)=>Promise<Uint8Array>};
+export type Target = {id:string; context:string; type:'text'|'checkbox'; hint?:string; location?:Location; span?:{start:number;end:number}};
+export type Location={part:string; row:number; column:number};
+export type PreviewCell={text:string; editable?:boolean};
+export type PreviewPart = {name:string; rows:PreviewCell[][]};
+export type Template = {targets:Target[]; format:string; preview?:()=>PreviewPart[]; addField?:(location:Location,label:string)=>Target|undefined; fill:(values:Record<string,string>)=>Promise<Uint8Array>};
 const token = /\{\{\s*([^{}\n]{1,100}?)\s*\}\}|\[\[\s*([^\[\]\n]{1,100}?)\s*\]\]|(?:\.{3,}|…+|_{3,})/g;
 const word='http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const sheet='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -53,24 +55,46 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
  const changes:Array<(values:Record<string,string>)=>void>=[];
  const docs=new Map<string,Document>();
  const previews:Array<()=>PreviewPart>=[];
- const add=(context:string,hint?:string)=>{
+ const manual=new Map<string,(label:string)=>Target|undefined>();
+ const key=({part,row,column}:Location)=>JSON.stringify([part,row,column]);
+ const add=(context:string,hint?:string,location?:Location)=>{
   if(targets.length>=150)return '';
   const id=String(targets.length+1);
-  targets.push({id,context:context.trim().slice(0,180),type:'text',hint:hint?.trim()});
+  targets.push({id,context:context.trim().slice(0,180),type:'text',hint:hint?.trim(),location});
   return id;
  };
  if(format==='docx'){
   if(!zip.file('word/document.xml'))throw Error('INVALID_FILE');
   for(const name of names.filter(n=>/^word\/(document|header\d+|footer\d+)\.xml$/.test(n))){
    const doc=xml(await zip.file(name)!.async('string'));docs.set(name,doc);
-   previews.push(()=>({name,rows:elements(doc,word,'p').slice(0,200).map(paragraph=>
-    [elements(paragraph,word,'t').map(node=>node.textContent||'').join('')])}));
-   for(const paragraph of elements(doc,word,'p')){
+   const paragraphs=elements(doc,word,'p');
+   previews.push(()=>({name,rows:paragraphs.slice(0,200).map(paragraph=>
+    [{text:elements(paragraph,word,'t').map(node=>node.textContent||'').join(''),editable:true}])}));
+   for(const [row,paragraph] of paragraphs.entries()){
+    const location={part:name,row,column:0};
     const nodes=elements(paragraph,word,'t');
     const texts=nodes.map(n=>n.textContent||'');
     const text=texts.join('');
-    const matches=entries(text).map(match=>({match,id:add(text.slice(Math.max(0,match.index!-70),match.index!+100),match[1]||match[2])})).filter(x=>x.id);
-    if(!matches.length)continue;
+    const matches=entries(text).map(match=>({match,id:add(text.slice(Math.max(0,match.index!-70),match.index!+100),match[1]||match[2],location)})).filter(x=>x.id);
+    for(const {match,id} of matches)targets[Number(id)-1].span={start:match.index!,end:match.index!+match[0].length};
+    if(!matches.length){
+     manual.set(key(location),label=>{
+      const id=add(text||label,label,location);
+      if(!id)return;
+      changes.push(values=>{
+       if(!values[id])return;
+       const run=doc.createElementNS(word,'w:r'), node=doc.createElementNS(word,'w:t');
+       node.setAttributeNS('http://www.w3.org/XML/1998/namespace','xml:space','preserve');
+       node.textContent=(text.trim()&&!/\s$/.test(text)?' ':'')+values[id];
+       const last=nodes.at(-1)?.parentElement;
+       const formatting=last&&elements(last,word,'rPr')[0];
+       if(formatting)run.append(formatting.cloneNode(true));
+       run.append(node);paragraph.append(run);
+      });
+      return targets.at(-1);
+     });
+     continue;
+    }
     changes.push(values=>{
      const updated=[...texts];
      for(const {match,id} of [...matches].reverse()){
@@ -105,26 +129,32 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
     const value=elements(cell,sheet,'v')[0]?.textContent||'';
     return cell.getAttribute('t')==='s'?strings[Number(value)]||'':cell.getAttribute('t')==='inlineStr'?elements(cell,sheet,'t').map(n=>n.textContent||'').join(''):value;
    };
-   previews.push(()=>({name,rows:elements(doc,sheet,'row').slice(0,80).map(row=>
+   const rows=elements(doc,sheet,'row');
+   const columnOf=(cell:Element)=>{
+    const letters=/^[A-Z]+/.exec(cell.getAttribute('r')||'')?.[0];
+    return letters?[...letters].reduce((index,letter)=>index*26+letter.charCodeAt(0)-64,0)-1:0;
+   };
+   previews.push(()=>({name,rows:rows.slice(0,80).map(row=>
     {
-     const columns:string[]=[];
+     const columns:PreviewCell[]=[];
      for(const cell of elements(row,sheet,'c')){
-      const letters=/^[A-Z]+/.exec(cell.getAttribute('r')||'')?.[0];
-      const column=letters?[...letters].reduce((index,letter)=>index*26+letter.charCodeAt(0)-64,0)-1:columns.length;
-      if(column<24)columns[column]=read(cell);
+      const column=columnOf(cell),text=read(cell);
+      if(column<24)columns[column]={text,editable:!text&&!elements(cell,sheet,'f').length};
      }
-     return Array.from(columns, value=>value||'');
+     return Array.from(columns, value=>value||{text:''});
     })}));
+   const rowIndexes=new Map(rows.map((row,index)=>[row,index]));
    for(const cell of cells){
+    const location={part:name,row:rowIndexes.get(cell.parentElement!)??0,column:columnOf(cell)};
     if(elements(cell,sheet,'f').length)continue;
     const text=read(cell), ref=cell.getAttribute('r')||'';
     const previous=cell.previousElementSibling;
     const label=previous?.localName==='c'?read(previous):'';
     const candidates:Array<{0:string;1?:string;2?:string;index?:number}>=entries(text);
     if(!text && cell.hasAttribute('s') && label && /[:：]$/.test(label.trim()))candidates.push({0:'',index:0});
-    const matched=candidates.map(match=>({match,id:add(ref+' · '+label+' '+text,match[1]||match[2]||undefined)})).filter(x=>x.id);
-    if(!matched.length)continue;
-    changes.push(values=>{
+    const matched=candidates.map(match=>({match,id:add(ref+' · '+label+' '+text,match[1]||match[2]||undefined,location)})).filter(x=>x.id);
+    for(const {match,id} of matched)targets[Number(id)-1].span={start:match.index!,end:match.index!+match[0].length};
+    const write=(values:Record<string,string>)=>{
      let value=text;
      for(const {match,id} of [...matched].reverse())if(values[id])value=value.slice(0,match.index!)+values[id]+value.slice(match.index!+match[0].length);
      if(value===text)return;
@@ -134,11 +164,25 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
      content.textContent=value;
      content.setAttributeNS('http://www.w3.org/XML/1998/namespace','xml:space','preserve');
      inline.append(content);cell.prepend(inline);
+    };
+    if(matched.length)changes.push(write);
+    else if(!text)manual.set(key(location),label=>{
+     const id=add(ref+' · '+label,label,location);
+     if(!id)return;
+     matched.push({match:{0:'',index:0},id});
+     changes.push(write);
+     return targets.at(-1);
     });
    }
   }
  }
- return {format,targets,preview:()=>previews.map(read=>read()),async fill(values){
+ return {format,targets,addField(location,label){
+  const id=key(location), create=manual.get(id);
+  if(!create)return;
+  const field=create(label);
+  if(field)manual.delete(id);
+  return field;
+ },preview:()=>previews.map(read=>read()),async fill(values){
   changes.forEach(change=>change(values));
   for(const [name,doc] of docs)zip.file(name,new XMLSerializer().serializeToString(doc));
   return zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
