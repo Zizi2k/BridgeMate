@@ -329,3 +329,10 @@
  body:has(.pay-slip-page) .content,.pay-slip-page{padding:0!important}
  .pay-slip-page tr{break-inside:avoid}
 }
+
+.pay-slip-bank,.pay-slip-transfer{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;padding:.75rem;border:1px solid var(--border)}
+.pay-slip-bank{width:100%;min-width:0}
+.pay-slip-bank small{flex-basis:100%}
+.pay-slip-transfer{margin-top:1rem;border-color:#111;justify-content:space-between;break-inside:avoid}
+.pay-slip-transfer img{display:block;max-width:100%;height:auto;background:white}
+@media print{body:has(.pay-slip-page) .content section.pay-slip-transfer{display:flex!important}}

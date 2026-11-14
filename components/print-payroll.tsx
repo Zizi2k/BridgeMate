@@ -1,6 +1,11 @@
 'use client';
+import {payrollQr} from '../lib/payroll-qr';
 import {useEffect,useState,type FormEvent} from 'react';
 import {printDefaults,type PrintTemplate} from '../lib/module-access';
+
+const banks:Record<string,string>={
+ '970436':'Vietcombank','970422':'MB Bank','970407':'Techcombank','970418':'BIDV','970416':'ACB',
+};
 
 type Slip={id:string;worker:string;work:string;period:string;total:number;commission:number;advance:number;balance:number};
 const keys=Object.keys(printDefaults) as Array<keyof PrintTemplate>;
@@ -37,6 +42,26 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
  const [adjustments,setAdjustments]=useState({allowance:0,insurance:0,tax:0});
  const total=entry.total+adjustments.allowance;
  const remaining=entry.balance+adjustments.allowance-adjustments.insurance-adjustments.tax;
+ const [bank,setBank]=useState('');
+ const [otherBin,setOtherBin]=useState('');
+ const [account,setAccount]=useState('');
+ const [generated,setGenerated]=useState<{payload:string;image:string}|null>(null);
+ const [qrBusy,setQrBusy]=useState(false),[qrError,setQrError]=useState('');
+ const amount=advance?entry.advance:remaining;
+ const bin=bank==='other'?otherBin.trim():bank;
+ const receiverAccount=account.trim();
+ const reference=(advance?'TAM UNG ':'LUONG ')+entry.period.replace('-','');
+ const payload=payrollQr(bin,receiverAccount,amount,reference);
+ const qr=generated?.payload===payload&&payload?generated.image:'';
+ async function makeQr(){
+  if(!payload)return;
+  setQrBusy(true);setQrError('');
+  try{
+   const {toDataURL}=await import('qrcode');
+   setGenerated({payload,image:await toDataURL(payload,{width:480,margin:4,errorCorrectionLevel:'M'})});
+  }catch{setQrError('Không tạo được mã QR. Vui lòng thử lại.')}
+  finally{setQrBusy(false)}
+ }
  const money=(value:number)=>new Intl.NumberFormat('vi-VN').format(value)+' ₫';
  return <div className="pay-slip">
   <div className="pay-slip-controls">
@@ -49,6 +74,19 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
       const value=Number(event.target.value);
       if(Number.isSafeInteger(value)&&value>=0&&value<=1e12)setAdjustments(current=>({...current,[key]:value}));
      }}/></label>)}
+    <fieldset className="pay-slip-bank">
+     <legend>Thông tin nhận chuyển khoản</legend>
+     <label>Ngân hàng<select value={bank} onChange={event=>setBank(event.target.value)}>
+      <option value="">Chọn ngân hàng</option>
+      {Object.entries(banks).map(([value,name])=><option key={value} value={value}>{name}</option>)}
+      <option value="other">Ngân hàng khác</option>
+     </select></label>
+     {bank==='other'&&<label>Mã BIN ngân hàng (6 số)<input inputMode="numeric" maxLength={6} value={otherBin} onChange={event=>setOtherBin(event.target.value)}/></label>}
+     <label>Số tài khoản người nhận<input inputMode="numeric" maxLength={19} value={account} onChange={event=>setAccount(event.target.value)}/></label>
+     <button className="btn" type="button" disabled={!payload||qrBusy} onClick={()=>void makeQr()}>{qrBusy?'Đang tạo mã…':'Tạo mã QR'}</button>
+     <small>{amount<=0?'Phiếu không có số tiền dương để tạo QR.':'Kiểm tra ngân hàng, số tài khoản và tên người nhận trên ứng dụng ngân hàng trước khi xác nhận chuyển tiền.'}</small>
+     {qrError&&<small role="alert">{qrError}</small>}
+    </fieldset>
     <button type="button" className="btn primary" disabled={!date} onClick={()=>window.print()}>In / Lưu PDF</button></>}
    {!advance&&template&&<small>Phụ cấp, bảo hiểm và thuế nhập tại đây chỉ áp dụng cho phiếu in này.</small>}
    {error&&<p role="alert">Không tải được mẫu in.</p>}
@@ -73,6 +111,15 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
     <tr><td>{advance?5:11}</td><th scope="row">{template.advance}</th><td>{money(entry.advance)}</td></tr>
     {!advance&&<tr><td>12</td><th scope="row">{template.balance}</th><td>{money(remaining)}</td></tr>}
    </tbody></table>
+   {payload&&<section className="pay-slip-transfer" aria-label="Thông tin chuyển khoản">
+    <div><strong>Thông tin chuyển khoản</strong>
+     <p>Ngân hàng: {banks[bin]||'BIN '+bin}</p>
+     <p>Số tài khoản: {receiverAccount}</p>
+     <p>Số tiền: {money(amount)}</p>
+     {qr&&<p>Nội dung: {reference}</p>}
+    </div>
+    {qr&&<img src={qr} alt="Mã VietQR chuyển khoản" width={144} height={144}/>}
+   </section>}
    <footer><strong>{template.payer}</strong><strong>{template.receiver}</strong></footer>
   </article>}
  </div>;
