@@ -1,3 +1,4 @@
+import {aptisPhotoKey,aptisPhotoSlots} from '../../../lib/aptis-photos';
 import aptisVocabulary from '../../../lib/data/aptis-vocabulary.json';
 import {aptisExample,createAptisQuestions,publicAptisQuestions,readAptisDocx,type AptisChallenge,type Vocabulary} from '../../../lib/aptis';
 import {vietQrBanks} from '../../../lib/vietqr-banks';
@@ -83,8 +84,16 @@ async function handle(req:Request){
  }
  const admin=accountRole(user)==='admin';
  const isAptis=path[0]==='aptis'&&path.length===2;
+ if(isAptis&&path[1]==='photos'&&method==='GET'){
+  const entries=await db.select({id:printSettings.id}).from(printSettings)
+   .where(inArray(printSettings.id,aptisPhotoSlots.map(aptisPhotoKey)));
+  return ok(aptisPhotoSlots.filter(slot=>entries.some(entry=>entry.id===aptisPhotoKey(slot))));
+ }
  if(isAptis&&path[1]==='photo'){
-  const id='aptis-celebration-photo';
+  const requested=url.searchParams.get('slot')??'1';
+  const slot=aptisPhotoSlots.find(value=>String(value)===requested);
+  check(slot,'APTIS_IMAGE_SLOT_INVALID');
+  const id=aptisPhotoKey(slot);
   const target=eq(printSettings.id,id);
   if(method==='GET'){
    const [entry]=await db.select().from(printSettings).where(target).limit(1);

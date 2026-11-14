@@ -151,3 +151,33 @@
 }
 
 .photoPreview { width: auto; max-width: 100%; max-height: 140px; margin-top: 10px; }
+.photoSettings { min-width: 0; margin-top: 16px; border: 1px solid var(--border); border-radius: 10px; }
+.photoSlots { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 10px; }
+.photoSlots form { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.waveStage {
+  position: relative;
+  width: min(86vw, 520px);
+  height: min(52svh, 490px);
+  overflow: hidden;
+}
+.waveStage .celebrationPhoto {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(53vw, 300px);
+  height: 82%;
+  opacity: 0;
+  animation: photoWave var(--wave-duration) var(--wave-delay) linear both;
+}
+.waveStage .celebrationPhoto[hidden] { display: none; }
+@keyframes photoWave {
+  0% { opacity: 0; transform: translate(0,42%) scale(.75); }
+  20% { opacity: 1; transform: translateX(calc(var(--wave-direction) * 17%)) translateY(24%) rotate(5deg); }
+  50% { opacity: 1; transform: translate(0,0) rotate(0); }
+  78% { opacity: 1; transform: translateX(calc(var(--wave-direction) * -17%)) translateY(-21%) rotate(-5deg); }
+  100% { opacity: 0; transform: translate(0,-45%) scale(.92); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .waveStage { height: auto; display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .waveStage .celebrationPhoto { position: static; width: 100%; height: min(20svh,150px); opacity: 1; animation: none; }
+}

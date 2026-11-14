@@ -3,6 +3,7 @@
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {BookOpen,CheckCircle2,Lightbulb,Loader2} from 'lucide-react';
 import BrandMark from './brand-mark';
+import {aptisPhotoSlots,aptisPhotoPath,type AptisPhotoSlot} from '../lib/aptis-photos';
 import AptisCelebration from './aptis-celebration';
 import styles from './aptis.module.css';
 
@@ -128,8 +129,6 @@ export function AptisGate({lang,controls,onContinue,onLogout}:{
 
 export function AptisBank({lang}:{lang:string}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
- const photoInput=useRef<HTMLInputElement>(null);
- const [photoVersion,setPhotoVersion]=useState(0),[photoBusy,setPhotoBusy]=useState(false),[photoMessage,setPhotoMessage]=useState('');
  const [bank,setBank]=useState<Bank|null>(null),[file,setFile]=useState<File|null>(null);
  const [busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');
  useEffect(()=>{
@@ -162,29 +161,6 @@ export function AptisBank({lang}:{lang:string}){
   });
  }
 
- async function changePhoto(remove=false){
-  const file=photoInput.current?.files?.[0];
-  if(!remove&&!file)return;
-  setPhotoBusy(true);setPhotoMessage('');
-  try{
-   if(remove)await aptisRequest('photo','DELETE',{});
-   else if(file){
-    if(file.size>2*1024*1024||!['image/png','image/webp'].includes(file.type))throw Error();
-    const image=await new Promise<string>((resolve,reject)=>{
-     const reader=new FileReader();
-     reader.onload=()=>resolve(String(reader.result));
-     reader.onerror=()=>reject(new Error());
-     reader.readAsDataURL(file);
-    });
-    await aptisRequest('photo','PATCH',{image});
-   }
-   if(photoInput.current)photoInput.current.value='';
-   setPhotoVersion(version=>version+1);
-   setPhotoMessage(remove?t('Photo removed.','Đã gỡ ảnh.'):t('Celebration photo saved.','Đã lưu ảnh chúc mừng.'));
-  }catch{setPhotoMessage(t('Could not update the photo. Use a PNG or WebP up to 2 MB.','Chưa cập nhật được ảnh. Hãy chọn PNG hoặc WebP tối đa 2 MB.'))}
-  finally{setPhotoBusy(false)}
- }
-
  return <fieldset className="review-card">
   <legend>{t('Aptis vocabulary bank','Ngân hàng từ vựng Aptis')}</legend>
   {bank&&<>
@@ -202,23 +178,56 @@ export function AptisBank({lang}:{lang:string}){
     <button className="btn" type="submit" disabled={busy||!file}>{busy&&<Loader2 size={15} className="spin"/>}{t('Replace vocabulary bank','Thay ngân hàng từ vựng')}</button>
    </form>
   </>}
-  <form onSubmit={event=>{event.preventDefault();void changePhoto()}}>
-   <label className="field">{t('Celebration image','Ảnh chúc mừng')}
-    <input ref={photoInput} type="file" accept="image/png,image/webp" disabled={photoBusy}/>
-   </label>
-   <p>{t('Choose a transparent PNG or WebP. Maximum 2 MB.','Chọn PNG hoặc WebP đã tách nền, tối đa 2 MB.')}</p>
-   <div className={styles.actions}>
-    <button type="submit" className="btn" disabled={photoBusy}>{t('Upload image','Tải ảnh lên')}</button>
-    <button type="button" className="btn" disabled={photoBusy} onClick={()=>void changePhoto(true)}>{t('Remove image','Gỡ ảnh')}</button>
-   </div>
-   {photoMessage&&<p role="status">{photoMessage}</p>}
-   <img key={photoVersion} src={`/api/aptis/photo?v=${photoVersion}`} alt={t('Current celebration image','Ảnh chúc mừng hiện tại')}
-    className={styles.photoPreview} onError={event=>{event.currentTarget.hidden=true}}/>
-  </form>
+  <fieldset className={styles.photoSettings}>
+   <legend>{t('Celebration images','Ảnh chúc mừng')}</legend>
+   <p>{t('Up to 6 transparent PNG or WebP images, 2 MB each. Images play in numbered order.','Tối đa 6 ảnh PNG hoặc WebP đã tách nền, mỗi ảnh tối đa 2 MB. Ảnh xuất hiện theo thứ tự từ 1 đến 6.')}</p>
+   <div className={styles.photoSlots}>{aptisPhotoSlots.map(slot=><AptisPhotoEditor key={slot} slot={slot} lang={lang}/>)}</div>
+  </fieldset>
   {message&&<p role="status">{t('Saved. New quizzes use the current bank.','Đã lưu. Bài mới sẽ dùng ngân hàng hiện tại.')}</p>}
   {error&&<p role="alert">{error==='DOCX_SIZE'||error==='TOO_LARGE'?t('Choose a .docx file up to 2 MB.','Chọn file .docx tối đa 2 MB.'):
    error==='APTIS_NEEDS_VOCABULARY'?t('Check the column names and add at least 5 distinct meanings.','Kiểm tra tên cột và bổ sung ít nhất 5 nghĩa khác nhau.'):
    error==='APTIS_TOO_MANY_WORDS'?t('The bank supports up to 1,500 entries.','Ngân hàng hỗ trợ tối đa 1.500 từ và cụm từ.'):
    t('Could not read or save the vocabulary bank.','Chưa đọc hoặc lưu được ngân hàng từ vựng.')}</p>}
  </fieldset>;
+}
+
+function AptisPhotoEditor({slot,lang}:{slot:AptisPhotoSlot;lang:string}){
+ const t=(en:string,vi:string)=>lang==='vi'?vi:en;
+ const photoInput=useRef<HTMLInputElement>(null);
+ const [photoVersion,setPhotoVersion]=useState(0),[photoBusy,setPhotoBusy]=useState(false),[photoMessage,setPhotoMessage]=useState('');
+ async function changePhoto(remove=false){
+  const file=photoInput.current?.files?.[0];
+  if(!remove&&!file)return;
+  setPhotoBusy(true);setPhotoMessage('');
+  try{
+   if(remove)await aptisRequest(aptisPhotoPath(slot),'DELETE',{});
+   else if(file){
+    if(file.size>2*1024*1024||!['image/png','image/webp'].includes(file.type))throw Error();
+    const image=await new Promise<string>((resolve,reject)=>{
+     const reader=new FileReader();
+     reader.onload=()=>resolve(String(reader.result));
+     reader.onerror=()=>reject(new Error());
+     reader.readAsDataURL(file);
+    });
+    await aptisRequest(aptisPhotoPath(slot),'PATCH',{image});
+   }
+   if(photoInput.current)photoInput.current.value='';
+   setPhotoVersion(version=>version+1);
+   setPhotoMessage(remove?t('Photo removed.','Đã gỡ ảnh.'):t('Celebration photo saved.','Đã lưu ảnh chúc mừng.'));
+  }catch{setPhotoMessage(t('Could not update the photo. Use a PNG or WebP up to 2 MB.','Chưa cập nhật được ảnh. Hãy chọn PNG hoặc WebP tối đa 2 MB.'))}
+  finally{setPhotoBusy(false)}
+ }
+
+ return <form onSubmit={event=>{event.preventDefault();void changePhoto()}}>
+   <label className="field">{t('Image','Ảnh')} {slot}
+    <input ref={photoInput} type="file" accept="image/png,image/webp" disabled={photoBusy}/>
+   </label>
+   <div className={styles.actions}>
+    <button type="submit" className="btn" disabled={photoBusy}>{t('Upload image','Tải ảnh lên')}</button>
+    <button type="button" className="btn" disabled={photoBusy} onClick={()=>void changePhoto(true)}>{t('Remove image','Gỡ ảnh')}</button>
+   </div>
+   {photoMessage&&<p role="status">{photoMessage}</p>}
+   <img key={photoVersion} src={`/api/aptis/${aptisPhotoPath(slot)}&v=${photoVersion}`} alt={t('Current celebration image','Ảnh chúc mừng hiện tại')}
+    className={styles.photoPreview} onError={event=>{event.currentTarget.hidden=true}}/>
+  </form>;
 }
