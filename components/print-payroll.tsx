@@ -1,11 +1,8 @@
 'use client';
+import {vietQrBanks} from '../lib/vietqr-banks';
 import {payrollQr} from '../lib/payroll-qr';
 import {useEffect,useState,type FormEvent} from 'react';
 import {printDefaults,type PrintTemplate} from '../lib/module-access';
-
-const banks:Record<string,string>={
- '970436':'Vietcombank','970422':'MB Bank','970407':'Techcombank','970418':'BIDV','970416':'ACB',
-};
 
 type Slip={id:string;worker:string;work:string;period:string;total:number;commission:number;advance:number;balance:number};
 const keys=Object.keys(printDefaults) as Array<keyof PrintTemplate>;
@@ -51,7 +48,8 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
  const bin=bank==='other'?otherBin.trim():bank;
  const receiverAccount=account.trim();
  const reference=(advance?'TAM UNG ':'LUONG ')+entry.period.replace('-','');
- const payload=payrollQr(bin,receiverAccount,amount,reference);
+ const selectedBank=vietQrBanks.find(item=>item.bin===bin);
+ const payload=selectedBank?.transferSupported===false?null:payrollQr(bin,receiverAccount,amount,reference);
  const qr=generated?.payload===payload&&payload?generated.image:'';
  async function makeQr(){
   if(!payload)return;
@@ -78,7 +76,12 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
      <legend>Thông tin nhận chuyển khoản</legend>
      <label>Ngân hàng<select value={bank} onChange={event=>setBank(event.target.value)}>
       <option value="">Chọn ngân hàng</option>
-      {Object.entries(banks).map(([value,name])=><option key={value} value={value}>{name}</option>)}
+      <optgroup label="Hỗ trợ chuyển khoản VietQR">
+       {vietQrBanks.filter(item=>item.transferSupported).map(item=><option key={item.bin} value={item.bin}>{item.name}</option>)}
+      </optgroup>
+      <optgroup label="Chưa hỗ trợ chuyển khoản VietQR">
+       {vietQrBanks.filter(item=>!item.transferSupported).map(item=><option key={item.bin} value={item.bin} disabled>{item.name}</option>)}
+      </optgroup>
       <option value="other">Ngân hàng khác</option>
      </select></label>
      {bank==='other'&&<label>Mã BIN ngân hàng (6 số)<input inputMode="numeric" maxLength={6} value={otherBin} onChange={event=>setOtherBin(event.target.value)}/></label>}
@@ -113,7 +116,7 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
    </tbody></table>
    {payload&&<section className="pay-slip-transfer" aria-label="Thông tin chuyển khoản">
     <div><strong>Thông tin chuyển khoản</strong>
-     <p>Ngân hàng: {banks[bin]||'BIN '+bin}</p>
+     <p>Ngân hàng: {selectedBank?.name||'BIN '+bin}</p>
      <p>Số tài khoản: {receiverAccount}</p>
      <p>Số tiền: {money(amount)}</p>
      {qr&&<p>Nội dung: {reference}</p>}
