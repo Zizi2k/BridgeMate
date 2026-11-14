@@ -1,8 +1,9 @@
 'use client';
 
-import {useEffect,useState,type ReactNode} from 'react';
+import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {BookOpen,CheckCircle2,Lightbulb,Loader2} from 'lucide-react';
 import BrandMark from './brand-mark';
+import AptisCelebration from './aptis-celebration';
 import styles from './aptis.module.css';
 
 type Question={word:string;options:string[]};
@@ -74,6 +75,8 @@ export function AptisGate({lang,controls,onContinue,onLogout}:{
   finally{setBusy(false)}
  }
 
+ if(result?.passed)return <AptisCelebration lang={lang} onContinue={onContinue}/>;
+
  const score=result?.scores.filter(Boolean).length??0;
  return <main className={styles.gate}>
   <header className={styles.header}>
@@ -114,11 +117,10 @@ export function AptisGate({lang,controls,onContinue,onLogout}:{
     </fieldset>;
    })}
    <div className={styles.submit} role="status">
-    {result&&<strong>{result.passed?t('5/5 correct. You can enter BridgeMate.','Đúng 5/5. Bạn có thể vào BridgeMate.'):t(`${score}/5 correct. Retry the remaining questions.`,`Đúng ${score}/5. Hãy làm lại các câu còn sai.`)}</strong>}
-    {result?.passed?<button type="button" className="btn primary" onClick={onContinue}>{t('Enter BridgeMate','Vào BridgeMate')}</button>:
-     <button type="submit" className="btn primary" disabled={busy||hintIndex!==null||answers.some(answer=>answer<0)}>
-      {busy&&<Loader2 className="spin" size={16}/>} {t('Check answers','Kiểm tra đáp án')}
-     </button>}
+    {result&&<strong>{t(`${score}/5 correct. Retry the remaining questions.`,`Đúng ${score}/5. Hãy làm lại các câu còn sai.`)}</strong>}
+    <button type="submit" className="btn primary" disabled={busy||hintIndex!==null||answers.some(answer=>answer<0)}>
+     {busy&&<Loader2 className="spin" size={16}/>} {t('Check answers','Kiểm tra đáp án')}
+    </button>
    </div>
   </form>}
  </main>;
@@ -126,6 +128,8 @@ export function AptisGate({lang,controls,onContinue,onLogout}:{
 
 export function AptisBank({lang}:{lang:string}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
+ const photoInput=useRef<HTMLInputElement>(null);
+ const [photoVersion,setPhotoVersion]=useState(0),[photoBusy,setPhotoBusy]=useState(false),[photoMessage,setPhotoMessage]=useState('');
  const [bank,setBank]=useState<Bank|null>(null),[file,setFile]=useState<File|null>(null);
  const [busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');
  useEffect(()=>{
@@ -158,6 +162,29 @@ export function AptisBank({lang}:{lang:string}){
   });
  }
 
+ async function changePhoto(remove=false){
+  const file=photoInput.current?.files?.[0];
+  if(!remove&&!file)return;
+  setPhotoBusy(true);setPhotoMessage('');
+  try{
+   if(remove)await aptisRequest('photo','DELETE',{});
+   else if(file){
+    if(file.size>2*1024*1024||!['image/png','image/webp'].includes(file.type))throw Error();
+    const image=await new Promise<string>((resolve,reject)=>{
+     const reader=new FileReader();
+     reader.onload=()=>resolve(String(reader.result));
+     reader.onerror=()=>reject(new Error());
+     reader.readAsDataURL(file);
+    });
+    await aptisRequest('photo','PATCH',{image});
+   }
+   if(photoInput.current)photoInput.current.value='';
+   setPhotoVersion(version=>version+1);
+   setPhotoMessage(remove?t('Photo removed.','Đã gỡ ảnh.'):t('Celebration photo saved.','Đã lưu ảnh chúc mừng.'));
+  }catch{setPhotoMessage(t('Could not update the photo. Use a PNG or WebP up to 2 MB.','Chưa cập nhật được ảnh. Hãy chọn PNG hoặc WebP tối đa 2 MB.'))}
+  finally{setPhotoBusy(false)}
+ }
+
  return <fieldset className="review-card">
   <legend>{t('Aptis vocabulary bank','Ngân hàng từ vựng Aptis')}</legend>
   {bank&&<>
@@ -175,6 +202,19 @@ export function AptisBank({lang}:{lang:string}){
     <button className="btn" type="submit" disabled={busy||!file}>{busy&&<Loader2 size={15} className="spin"/>}{t('Replace vocabulary bank','Thay ngân hàng từ vựng')}</button>
    </form>
   </>}
+  <form onSubmit={event=>{event.preventDefault();void changePhoto()}}>
+   <label className="field">{t('Celebration image','Ảnh chúc mừng')}
+    <input ref={photoInput} type="file" accept="image/png,image/webp" disabled={photoBusy}/>
+   </label>
+   <p>{t('Choose a transparent PNG or WebP. Maximum 2 MB.','Chọn PNG hoặc WebP đã tách nền, tối đa 2 MB.')}</p>
+   <div className={styles.actions}>
+    <button type="submit" className="btn" disabled={photoBusy}>{t('Upload image','Tải ảnh lên')}</button>
+    <button type="button" className="btn" disabled={photoBusy} onClick={()=>void changePhoto(true)}>{t('Remove image','Gỡ ảnh')}</button>
+   </div>
+   {photoMessage&&<p role="status">{photoMessage}</p>}
+   <img key={photoVersion} src={`/api/aptis/photo?v=${photoVersion}`} alt={t('Current celebration image','Ảnh chúc mừng hiện tại')}
+    className={styles.photoPreview} onError={event=>{event.currentTarget.hidden=true}}/>
+  </form>
   {message&&<p role="status">{t('Saved. New quizzes use the current bank.','Đã lưu. Bài mới sẽ dùng ngân hàng hiện tại.')}</p>}
   {error&&<p role="alert">{error==='DOCX_SIZE'||error==='TOO_LARGE'?t('Choose a .docx file up to 2 MB.','Chọn file .docx tối đa 2 MB.'):
    error==='APTIS_NEEDS_VOCABULARY'?t('Check the column names and add at least 5 distinct meanings.','Kiểm tra tên cột và bổ sung ít nhất 5 nghĩa khác nhau.'):

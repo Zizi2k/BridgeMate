@@ -40,7 +40,7 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<(path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&path[1]==='bank')?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
+ check(JSON.stringify(body).length<(path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
  async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);return {...publicUser(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
@@ -83,6 +83,37 @@ async function handle(req:Request){
  }
  const admin=accountRole(user)==='admin';
  const isAptis=path[0]==='aptis'&&path.length===2;
+ if(isAptis&&path[1]==='photo'){
+  const id='aptis-celebration-photo';
+  const target=eq(printSettings.id,id);
+  if(method==='GET'){
+   const [entry]=await db.select().from(printSettings).where(target).limit(1);
+   if(!entry)return new Response(null,{status:404,headers:{'Cache-Control':'private, no-store'}});
+   const {mime,base64}=entry.data as {mime:string;base64:string};
+   return new Response(new Uint8Array(Buffer.from(base64,'base64')),{
+    headers:{'Content-Type':mime,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'},
+   });
+  }
+  check(admin,'FORBIDDEN',403);
+  if(method==='DELETE'){
+   await db.delete(printSettings).where(target);
+   return ok(null);
+  }
+  if(method==='PATCH'){
+   const image=typeof body.image==='string'&&/^data:(image\/(?:png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(body.image);
+   check(image&&image[2].length%4===0,'APTIS_IMAGE_INVALID');
+   const [,mime,base64]=image;
+   const bytes=Buffer.from(base64,'base64');
+   check(bytes.length>=24&&bytes.length<=2*1024*1024,'APTIS_IMAGE_INVALID');
+   const valid=mime==='image/png'
+    ? bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))&&bytes.toString('ascii',12,16)==='IHDR'
+    : bytes.toString('ascii',0,4)==='RIFF'&&bytes.toString('ascii',8,12)==='WEBP';
+   check(valid,'APTIS_IMAGE_INVALID');
+   const data={mime,base64};
+   await db.insert(printSettings).values({id,data}).onDuplicateKeyUpdate({set:{data}});
+   return ok(null);
+  }
+ }
  const bankId='aptis-vocabulary';
  const configurationQuery=eq(printSettings.id,bankId);
  const [settings]=await db.select({

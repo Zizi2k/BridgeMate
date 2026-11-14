@@ -77,3 +77,77 @@
   .intro { align-items: flex-start; }
   .intro h1 { font-size: 23px; }
 }
+
+.celebration {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+  overflow: hidden;
+  padding: 28px 16px;
+  color: #fff2e0;
+  background: radial-gradient(ellipse at 50% 64%, #543049, #1a1429 65%, #100d19);
+}
+.celebrationContent {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  max-width: 100%;
+  text-align: center;
+}
+.celebrationContent h1 {
+  color: #ffe1a8;
+  font-size: clamp(30px, 9vw, 76px);
+  letter-spacing: -.045em;
+  animation: celebrateIn .55s ease-out both;
+}
+.celebrationContent p { font-size: 16px; }
+.celebrationPhoto {
+  display: block;
+  width: min(78vw, 410px);
+  height: min(47svh, 450px);
+  object-fit: contain;
+  filter: drop-shadow(0 12px 26px #140a23aa);
+  animation: celebrateIn .65s .16s ease-out both;
+}
+.effects { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.spark {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color);
+  box-shadow: 0 0 10px var(--color);
+  opacity: 0;
+  animation: burst 1.15s var(--delay) ease-out both;
+}
+.rose {
+  position: absolute;
+  left: var(--x);
+  bottom: -55px;
+  font-size: clamp(20px, 5vw, 36px);
+  opacity: 0;
+  animation: roseToss 2.65s var(--delay) ease-out both;
+}
+@keyframes celebrateIn {
+  from { opacity: 0; transform: translateY(18px) scale(.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes burst {
+  8% { opacity: 1; }
+  to { transform: translate(var(--dx), var(--dy)) scale(.35); opacity: 0; }
+}
+@keyframes roseToss {
+  12% { opacity: 1; }
+  72% { opacity: .9; }
+  to { transform: translate(var(--drift), -81svh) rotate(95deg); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .effects { display: none; }
+  .celebrationContent h1, .celebrationPhoto { animation: none; }
+}
+
+.photoPreview { width: auto; max-width: 100%; max-height: 140px; margin-top: 10px; }
