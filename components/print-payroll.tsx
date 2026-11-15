@@ -4,7 +4,7 @@ import {payrollQr} from '../lib/payroll-qr';
 import {useEffect,useState,type FormEvent} from 'react';
 import {printDefaults,type PrintTemplate} from '../lib/module-access';
 
-type Slip={id:string;worker:string;work:string;period:string;total:number;commission:number;advance:number;balance:number};
+type Slip={id:string;worker:string;work:string;employeeCode?:string;period:string;total:number;commission:number;advance:number;balance:number};
 const keys=Object.keys(printDefaults) as Array<keyof PrintTemplate>;
 const headings:Partial<Record<keyof PrintTemplate,string>>={company:'Công ty',address:'Địa chỉ',salaryTitle:'Tiêu đề phiếu lương',advanceTitle:'Tiêu đề phiếu tạm ứng'};
 
@@ -31,11 +31,11 @@ export function PrintTemplateEditor(){
  </details>;
 }
 
-export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance:boolean;onClose:()=>void}){
- const [template,setTemplate]=useState<PrintTemplate|null>(null),[error,setError]=useState(false);
- const [code,setCode]=useState(''),[position,setPosition]=useState('');
+export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{entry:Slip;advance:boolean;onClose:()=>void;readOnlyTemplate?:PrintTemplate}){
+ const [template,setTemplate]=useState<PrintTemplate|null>(readOnlyTemplate??null),[error,setError]=useState(false);
+ const [code,setCode]=useState(entry.employeeCode??''),[position,setPosition]=useState('');
  const [date,setDate]=useState(()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Ho_Chi_Minh'}).format(new Date()));
- useEffect(()=>{let active=true;settings().then(data=>{if(active)setTemplate(data)}).catch(()=>{if(active)setError(true)});return()=>{active=false}},[]);
+ useEffect(()=>{if(readOnlyTemplate)return;let active=true;settings().then(data=>{if(active)setTemplate(data)}).catch(()=>{if(active)setError(true)});return()=>{active=false}},[readOnlyTemplate]);
  const [adjustments,setAdjustments]=useState({allowance:0,insurance:0,tax:0});
  const total=entry.total+adjustments.allowance;
  const remaining=entry.balance+adjustments.allowance-adjustments.insurance-adjustments.tax;
@@ -94,7 +94,7 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
  return <div className="pay-slip">
   <div className="pay-slip-controls">
    <button className="btn" type="button" onClick={onClose}>Đóng phiếu</button>
-   {template&&<><label>{template.code}<input value={code} onChange={event=>setCode(event.target.value)}/></label>
+   {template&&!readOnlyTemplate&&<><label>{template.code}<input value={code} onChange={event=>setCode(event.target.value)}/></label>
     <label>{template.position}<input value={position} onChange={event=>setPosition(event.target.value)}/></label>
     <label>Ngày lập<input type="date" value={date} onChange={event=>setDate(event.target.value)}/></label>
     {!advance&&(['allowance','insurance','tax'] as const).map(key=><label key={key}>{template[key]} (₫)
@@ -126,8 +126,9 @@ export default function PrintPayroll({entry,advance,onClose}:{entry:Slip;advance
      <small>{amount<=0?'Phiếu không có số tiền dương để tạo QR.':'Kiểm tra ngân hàng, số tài khoản và tên người nhận trên ứng dụng ngân hàng trước khi xác nhận chuyển tiền.'}</small>
      {qrError&&<small role="alert">{qrError}</small>}
     </fieldset>
-    <button type="button" className="btn primary" disabled={!date} onClick={()=>window.print()}>In / Lưu PDF</button></>}
-   {!advance&&template&&<small>Phụ cấp, bảo hiểm và thuế nhập tại đây chỉ áp dụng cho phiếu in này.</small>}
+   </>}
+   {template&&<button type="button" className="btn primary" disabled={!date} onClick={()=>window.print()}>In / Lưu PDF</button>}
+   {!advance&&template&&!readOnlyTemplate&&<small>Phụ cấp, bảo hiểm và thuế nhập tại đây chỉ áp dụng cho phiếu in này.</small>}
    {error&&<p role="alert">Không tải được mẫu in.</p>}
   </div>
   {template&&<article className="pay-slip-page">
