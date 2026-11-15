@@ -3,7 +3,7 @@ import aptisVocabulary from '../../../lib/data/aptis-vocabulary.json';
 import {aptisExample,createAptisQuestions,publicAptisQuestions,readAptisDocx,type AptisChallenge,type Vocabulary} from '../../../lib/aptis';
 import {vietQrBanks} from '../../../lib/vietqr-banks';
 import {isModule,printDefaults,validatePrintTemplate,type Module} from '../../../lib/module-access';
-import {payrollData} from '../../../lib/payroll';
+import {employeeCodePattern,normalizeEmployeeCode,payPeriodPattern,payrollData,summarizePayslip} from '../../../lib/payroll';
 import {accountRole} from "../../../lib/account-role";
 import {personalData,validDay} from '../../../lib/personal-workspace';
 import {rankTeam,completionRecipients,POINTS_PER_TASK} from '../../../lib/ranking';
@@ -16,7 +16,7 @@ import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
 import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges} from '../../../db/schema';
-import {and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
+import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
 export const dynamic='force-dynamic';
@@ -333,6 +333,29 @@ async function handle(req:Request){
   }
   throw new ApiError('NOT_FOUND',404);
  }
+ if(path[0]==='my-payslips'&&path.length===1&&method==='POST'){
+  check(!user.demo,'FORBIDDEN',403);
+  const employeeCode=normalizeEmployeeCode(typeof body.employeeCode==='string'?body.employeeCode:'');
+  const period=typeof body.period==='string'?body.period:'';
+  check(employeeCodePattern.test(employeeCode)&&payPeriodPattern.test(period));
+  const rows=await db.select({id:payrollEntries.id,scopeId:payrollEntries.scopeId,data:payrollEntries.data})
+   .from(payrollEntries).where(and(
+    like(payrollEntries.scopeId,'team:%'),
+    sql`BINARY JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId')) = ${user.id}`,
+    sql`BINARY JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.employeeCode')) = ${employeeCode}`,
+    sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`,
+   ));
+  type Entry=NonNullable<ReturnType<typeof payrollData>> & {id:string};
+  const byTeam=new Map<string,Entry[]>();
+  for(const row of rows){
+   const entries=byTeam.get(row.scopeId)??[];
+   entries.push({...row.data as Entry,id:row.id});
+   byTeam.set(row.scopeId,entries);
+  }
+  const slips=[...byTeam.values()].map(summarizePayslip).filter(slip=>slip!==null);
+  const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
+  return ok({slips,template:{...printDefaults,...template?.data as object}});
+ }
  if(path[0]==='payroll'){
   const [,scope,entryId,...extra]=path;
   check(scope&&extra.length===0,'NOT_FOUND',404);
@@ -348,8 +371,17 @@ async function handle(req:Request){
    const rows=await db.select({id:payrollEntries.id,data:payrollEntries.data}).from(payrollEntries).where(owned);
    return ok(rows.map(row=>({...row.data as object,id:row.id})));
   }
-  if(method==='POST'&&!entryId){
+  async function validatedPayroll(){
    const data=payrollData(body,scope!=='me');check(data);
+   if(data.recipientId){
+    const [recipient]=await db.select({id:members.id}).from(members).innerJoin(users,eq(users.id,members.userId))
+     .where(and(eq(members.teamId,scope),eq(members.userId,data.recipientId),eq(users.demo,0))).limit(1);
+    check(recipient&&!await removed(data.recipientId),'ASSIGNEE_NOT_MEMBER',400);
+   }
+   return data;
+  }
+  if(method==='POST'&&!entryId){
+   const data=await validatedPayroll();
    const id=uid();
    await db.insert(payrollEntries).values({id,scopeId,data});
    return ok({...data,id},201);
@@ -360,7 +392,7 @@ async function handle(req:Request){
     const [result]=await db.delete(payrollEntries).where(where);
     check(result.affectedRows,'NOT_FOUND',404);return ok(null);
    }
-   const data=payrollData(body,scope!=='me');check(data);
+   const data=await validatedPayroll();
    const [result]=await db.update(payrollEntries).set({data}).where(where);
    check(result.affectedRows,'NOT_FOUND',404);return ok({...data,id:entryId});
   }
