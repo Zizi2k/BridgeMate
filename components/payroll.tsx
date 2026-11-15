@@ -2,7 +2,7 @@
 import ModuleGate from './module-gate';
 import PrintPayroll from './print-payroll';
 import {useEffect,useState,type FormEvent} from 'react';
-import {payrollData,payrollByWorker,payrollWorkerKey} from '../lib/payroll';
+import {payrollData,payrollByWorker,payrollEntryWorkerKey,summarizePayslip} from '../lib/payroll';
 import styles from './payroll.module.css';
 
 type Entry=NonNullable<ReturnType<typeof payrollData>> & {id:string};
@@ -15,7 +15,9 @@ async function request(scope:string,id='',method='GET',data?:object){
  return (await response.json()).data;
 }
 
-export default function Payroll({lang,teamId}:{lang:string;teamId?:string}){
+type Recipient={id:string;name:string;demo?:boolean};
+
+export default function Payroll({lang,teamId,recipients}:{lang:string;teamId?:string;recipients:Recipient[]}){
  const vi=lang==='vi';
  const [scope,setScope]=useState('me');
  const actualScope=scope==='team'&&teamId?teamId:'me';
@@ -28,12 +30,12 @@ export default function Payroll({lang,teamId}:{lang:string;teamId?:string}){
    </select>
   </label></div>
   <ModuleGate key={actualScope} module={actualScope==='me'?'payroll-personal':'payroll-team'} lang={lang}>
-   <PayrollLedger lang={lang} actualScope={actualScope}/>
+   <PayrollLedger lang={lang} actualScope={actualScope} recipients={recipients}/>
   </ModuleGate>
  </section>;
 }
 
-function PayrollLedger({lang,actualScope}:{lang:string;actualScope:string}){
+function PayrollLedger({lang,actualScope,recipients}:{lang:string;actualScope:string;recipients:Recipient[]}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
  const [workerFilter,setWorkerFilter]=useState('');
  const [slip,setSlip]=useState<{entry:Parameters<typeof PrintPayroll>[0]['entry'];advance:boolean}|null>(null);
@@ -51,13 +53,11 @@ function PayrollLedger({lang,actualScope}:{lang:string;actualScope:string}){
  const monthly=rows.filter(row=>row.period===period);
  const grouped=payrollByWorker(monthly);
  const selected=grouped.find(([key])=>key===workerFilter)?.[0]||'';
- const visible=(isTeam&&selected?monthly.filter(row=>payrollWorkerKey(row.worker)===selected):monthly)
+ const visible=(isTeam&&selected?monthly.filter(row=>payrollEntryWorkerKey(row)===selected):monthly)
   .sort((a,b)=>(a.workDate||'').localeCompare(b.workDate||'')||(a.start||'').localeCompare(b.start||''));
- function printWorker(key:string,name:string,advance:boolean){
-  const entries=monthly.filter(row=>payrollWorkerKey(row.worker)===key);
-  const sum=(field:'total'|'advance'|'commission'|'balance')=>entries.reduce((value,row)=>value+row[field],0);
-  setSlip({advance,entry:{id:key,worker:name,period,work:[...new Set(entries.map(row=>row.work))].join(', '),
-   total:sum('total'),advance:sum('advance'),commission:sum('commission'),balance:sum('balance')}});
+ function printWorker(key:string,advance:boolean){
+  const entry=summarizePayslip(monthly.filter(row=>payrollEntryWorkerKey(row)===key));
+  if(entry)setSlip({advance,entry});
  }
  const hoursText=(value:number)=>new Intl.NumberFormat(lang==='vi'?'vi-VN':'en',{maximumFractionDigits:2}).format(value);
  const currency=(value:number)=>new Intl.NumberFormat(lang==='vi'?'vi-VN':'en',{style:'currency',currency:'VND'}).format(value);
@@ -88,7 +88,7 @@ function PayrollLedger({lang,actualScope}:{lang:string;actualScope:string}){
   {slip?<PrintPayroll entry={slip.entry} advance={slip.advance} onClose={()=>setSlip(null)}/>:<>
   <div className={styles.toolbar}>
    {isTeam&&<label>{t('Worker','Người làm')}<select value={selected} onChange={event=>setWorkerFilter(event.target.value)}>
-    <option value="">{t('All workers','Tất cả người làm')}</option>{grouped.map(([key,group])=><option key={key} value={key}>{group.name}</option>)}
+    <option value="">{t('All workers','Tất cả người làm')}</option>{grouped.map(([key,group])=><option key={key} value={key}>{group.name}{group.employeeCode&&` · ${group.employeeCode}`}</option>)}
    </select></label>}
    <label>{t('Month','Tháng')}<input type="month" value={period} disabled={busy} onChange={event=>{if(event.target.value)setPeriod(event.target.value)}}/></label>
   </div>
@@ -103,6 +103,14 @@ function PayrollLedger({lang,actualScope}:{lang:string;actualScope:string}){
      <option value="hour">{t('Hourly','Theo giờ')}</option><option value="month">{t('Monthly','Theo tháng')}</option>
     </select></label>
     {isTeam&&<>
+     <label>{t('BridgeMate recipient','Tài khoản nhận phiếu')}<select name="recipientId" defaultValue={edit?.recipientId??''}>
+      <option value="">{t('Do not share with an account','Chưa chia sẻ với tài khoản')}</option>
+      {edit?.recipientId&&!recipients.some(person=>person.id===edit.recipientId)&&
+       <option value={edit.recipientId}>{edit.worker}</option>}
+      {recipients.filter(person=>!person.demo).map(person=><option key={person.id} value={person.id}>{person.name}</option>)}
+     </select></label>
+     <label>{t('Employee code','Mã nhân viên')}<input name="employeeCode" maxLength={32} pattern={String.raw`[A-Za-z0-9][A-Za-z0-9_\-]{0,31}`} defaultValue={edit?.employeeCode}/></label>
+     <small className={styles.full}>{t('To share this entry, select the employee’s account and enter their code. Use the same code on all their shifts.','Để nhân viên tra cứu, chọn tài khoản và nhập mã nhân viên. Dùng cùng một mã cho các ca làm của người đó.')}</small>
      <label>{t('Work date','Ngày làm')}<input name="workDate" type="date" required={mode==='hour'} defaultValue={edit?.workDate}/></label>
      <label>{t('Clock in','Giờ vào')}<input name="start" type="time" required={mode==='hour'} defaultValue={edit?.start}/></label>
      <label>{t('Clock out','Giờ ra')}<input name="end" type="time" required={mode==='hour'} defaultValue={edit?.end}/></label>
@@ -119,8 +127,8 @@ function PayrollLedger({lang,actualScope}:{lang:string;actualScope:string}){
     <div className={styles.table}><table><thead><tr>
      {[t('Worker','Người làm'),t('Entries','Số dòng'),t('Hours','Tổng giờ'),t('Total pay','Tổng lương'),t('Advance','Tiền ứng'),t('Remaining','Còn lại'),t('Print','In phiếu')].map(label=><th scope="col" key={label}>{label}</th>)}
     </tr></thead><tbody>{grouped.map(([key,group])=><tr key={key}>
-     <td><button type="button" className="btn" aria-pressed={selected===key} onClick={()=>setWorkerFilter(selected===key?'':key)}>{group.name}</button></td>
-     <td>{group.count}</td><td>{hoursText(group.hours)}</td><td>{currency(group.total)}</td><td>{currency(group.advance)}</td><td>{currency(group.balance)}</td><td><button type="button" className="btn" onClick={()=>printWorker(key,group.name,false)}>{t("Payslip","Phiếu lương")}</button> <button type="button" className="btn" disabled={group.advance<=0} onClick={()=>printWorker(key,group.name,true)}>{t("Advance slip","Phiếu tạm ứng")}</button></td>
+     <td><button type="button" className="btn" aria-pressed={selected===key} onClick={()=>setWorkerFilter(selected===key?'':key)}>{group.name}{group.employeeCode&&` · ${group.employeeCode}`}</button></td>
+     <td>{group.count}</td><td>{hoursText(group.hours)}</td><td>{currency(group.total)}</td><td>{currency(group.advance)}</td><td>{currency(group.balance)}</td><td><button type="button" className="btn" onClick={()=>printWorker(key,false)}>{t("Payslip","Phiếu lương")}</button> <button type="button" className="btn" disabled={group.advance<=0} onClick={()=>printWorker(key,true)}>{t("Advance slip","Phiếu tạm ứng")}</button></td>
     </tr>)}</tbody></table></div>
    </section>}
    {visible.length?<div className={styles.table}><table>
