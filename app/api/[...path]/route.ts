@@ -1,3 +1,5 @@
+import {historicalAttendance} from '../../../lib/attendance-supplement';
+import {teamWebsite,canEditTeamWebsite} from '../../../lib/team-website';
 import {payrollPdf,payrollXlsx} from '../../../lib/payroll-export';
 import {validReportYear,payrollReportKey} from '../../../lib/payroll-report';
 import {canManageDepartment,searchEmployee} from '../../../lib/department-policy';
@@ -470,6 +472,21 @@ async function handle(req:Request){
    check(ownerAdmin||departmentManager,'FORBIDDEN',403);check(method==='POST');
    return ok(await attendancePayroll(period,path[1]==='sync',false,ownerAdmin?undefined:currentDepartment.departmentId));
   }
+  if(path[1]==='supplement'&&path.length===2&&method==='POST'){
+   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+   const userId=str(body.userId,36);check(await managesEmployee(userId),'FORBIDDEN',403);
+   check(!await removed(userId),'NOT_FOUND',404);
+   let data:ReturnType<typeof historicalAttendance>;
+   try{data=historicalAttendance(body)}catch(error){throw new ApiError(error instanceof Error?error.message:'VALIDATION')}
+   const id=uid(),updatedAt=now();
+   await db.transaction(async tx=>{
+    const [employee]=await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,userId)).for('update');check(employee,'EMPLOYEE_NOT_ASSIGNED',404);
+    const [existing]=await tx.select({id:attendanceEntries.id}).from(attendanceEntries).where(and(eq(attendanceEntries.userId,userId),eq(attendanceEntries.day,data.day))).for('update');check(!existing,'ATTENDANCE_EXISTS',409);
+    await tx.insert(attendanceEntries).values({id,userId,...data,supplemented:1,updatedBy:user.id,updatedAt});
+    await tx.insert(attendanceAudit).values({id:uid(),entryId:id,actorId:user.id,data:{action:'attendance-supplement',employeeId:userId,...data},createdAt:updatedAt});
+   });
+   return ok({id,...data},201);
+  }
   if(path[1]==='clock'&&method==='POST'){
    check(ownerAdmin||currentDepartment?.active&&currentDepartment.status==='approved','DEPARTMENT_REQUIRED',403);
    check(assignment&&normalizeEmployeeCode(str(body.code,32))===assignment.code&&str(body.name,120).normalize('NFC')===assignment.name.normalize('NFC'),'EMPLOYEE_MISMATCH',403);
@@ -529,7 +546,7 @@ async function handle(req:Request){
     });
    }
    if(method==='POST'&&!path[3]){
-    check(canUploadEvidence(ownerAdmin,owns,!entry.end||Date.now()-Date.parse(entry.end)<15*60000||!!entry.editable),'FORBIDDEN',403);
+    check(canUploadEvidence(ownerAdmin,owns,!entry.end||Date.now()-Date.parse(entry.end)<15*60000||!!entry.editable||!!entry.supplemented),'FORBIDDEN',403);
     const name=str(body.name,180).replace(/[\\/\r\n]/g,'_'),mime=typeof body.mime==='string'?body.mime.slice(0,120):'';
     check(imageFilenameAllowed(name,mime),'IMAGE_FORMAT');
     const data=str(body.data,MAX_EVIDENCE_BYTES*4/3+4);check(/^[A-Za-z0-9+/]+={0,2}$/.test(data),'IMAGE_FORMAT');
@@ -678,7 +695,7 @@ async function handle(req:Request){
   }
  }
  if(path[0]==='teams'){
-  if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,ownerId:teams.ownerId,leaderId:teams.leaderId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(and(eq(members.userId,user.id),eq(teams.deleted,0)));return ok(list)}
+  if(path.length===1&&method==='GET'){const list=await db.select({id:teams.id,name:teams.name,description:teams.description,website:teams.website,ownerId:teams.ownerId,leaderId:teams.leaderId,invite:teams.invite}).from(teams).innerJoin(members,eq(teams.id,members.teamId)).where(and(eq(members.userId,user.id),eq(teams.deleted,0)));return ok(list)}
   if(path.length===1&&method==='POST'){const t={id:uid(),name:str(body.name,80),description:typeof body.description==='string'?body.description.slice(0,500):'',ownerId:user.id,invite:uid().replaceAll('-','').slice(0,12).toUpperCase()};await db.transaction(async tx=>{await tx.insert(teams).values(t);await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'owner'})});return ok(t,201)}
   if(path[1]==='join'&&method==='POST'){
    const invite=str(body.invite,32).toUpperCase();const joined=await db.transaction(async tx=>{const [t]=await tx.select().from(teams).where(eq(teams.invite,invite)).for('update');check(t&&!t.deleted,'INVALID_INVITE',404);const [m]=await tx.select().from(members).where(and(eq(members.teamId,t.id),eq(members.userId,user.id))).limit(1);if(!m)await tx.insert(members).values({id:uid(),teamId:t.id,userId:user.id,role:'member'});return t});return ok(joined)
@@ -693,6 +710,11 @@ async function handle(req:Request){
    }));
   }
   const t=await teamAccess(path[1]);
+  if(path[2]==='website'&&path.length===3&&method==='PATCH'){
+   check(canEditTeamWebsite(user.id,t,ownerAdmin),'FORBIDDEN',403);
+   let website:string;try{website=teamWebsite(body.website)}catch{throw new ApiError('WEBSITE_INVALID')}
+   await db.update(teams).set({website}).where(and(eq(teams.id,t.id),eq(teams.deleted,0)));return ok({website});
+  }
   if(path[2]==='ranking'&&path.length===3&&method==='GET'){
    const [people,completions]=await Promise.all([db.select({id:users.id,name:users.name,avatar:profiles.avatar}).from(members).innerJoin(users,eq(members.userId,users.id)).leftJoin(profiles,eq(profiles.userId,users.id)).where(eq(members.teamId,t.id)),db.select({recipients:taskCompletions.recipients}).from(taskCompletions).where(eq(taskCompletions.teamId,t.id))]);
    return ok({pointsPerTask:POINTS_PER_TASK,rows:rankTeam(people,completions)})

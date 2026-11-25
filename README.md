@@ -210,3 +210,12 @@ Cấu hình `VIETQR_CLIENT_ID` và `VIETQR_API_KEY` từ My VietQR ở máy ch�
 - Xuất cả năm tạo báo cáo gồm các kỳ lương của năm; bộ phiếu giữ riêng từng nhân viên, từng phòng ban và từng tháng, không gộp các tháng thành một phiếu sai kỳ. XLSX có trang danh sách và các trang phiếu; PDF có một trang cho mỗi phiếu và bảng lương nhiều trang tự lặp tiêu đề.
 - Export dùng cùng API lọc phòng ban ở máy chủ, không lấy dữ liệu ngoài phạm vi quản lý dù thay đổi query phòng ban, nhân viên hay kỳ lương. File trả về riêng tư, không cache. PDF nhúng font Noto Sans sẵn có để giữ tiếng Việt.
 - Chạy migration `0016_evidence_review.sql` trước khi khởi động phiên bản này.
+
+### Chấm công bổ sung và website hoạt động nhóm
+
+- Trong **Chấm công**, admin và quản lý có nút **Chấm công bổ sung ngày trước**. Chọn nhân viên, ngày trước hôm nay, giờ vào/ra, nghỉ trưa, ca qua đêm nếu có và lý do bổ sung. Quản lý chỉ chọn được nhân viên thuộc phòng ban đã được duyệt của mình; admin chọn được toàn bộ nhân viên có mã đã cấp.
+- API xác thực lại phạm vi phòng ban, ngày theo múi giờ Việt Nam, thời điểm kết thúc không ở tương lai, thời lượng không vượt 24 giờ và nghỉ không vượt tổng ca. Khóa bản ghi nhân viên và kiểm tra khóa duy nhất nhân viên/ngày để không tạo trùng hoặc ghi đè ca cũ. Nếu đã có ca, dùng chức năng sửa chấm công hiện có.
+- Bản ghi bổ sung được đánh dấu riêng, lưu người bổ sung và lý do trong nhật ký; giờ công đi vào tổng hợp lương như ca thông thường. Nhân viên được tải ảnh của mình cho ca bổ sung dù ngày ca đã qua, không mở quyền sửa giờ công. Quản lý vẫn không được tải hoặc thay ảnh của nhân viên.
+- **Nhóm của tôi → Website hoạt động của nhóm** có ô dán link và nút mở website ở tab mới. Người tạo nhóm, trưởng nhóm được bầu hoặc admin (có quyền vào nhóm) cập nhật link; các thành viên khác xem và mở link. Để trống rồi lưu để gỡ link.
+- Chỉ nhận HTTP/HTTPS, tự thêm HTTPS khi dán tên miền chưa có giao thức; từ chối link chứa mã thực thi hoặc thông tin đăng nhập. Hệ thống không truy cập nội dung website bên ngoài khi lưu link.
+- Migration: `0017_attendance_supplement_team_website.sql`.

@@ -1,9 +1,9 @@
 'use client';
 import {useEffect,useState} from 'react';
 import {Pencil,Trash2,RotateCcw} from 'lucide-react';
-type Team={id:string;name:string;description:string};
+type Team={id:string;name:string;description:string;website?:string};
 async function send(path:string,method:string,body?:unknown){const r=await fetch('/api/teams'+path,{method,cache:'no-store',headers:method==='GET'?{}:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const j=await r.json();if(!r.ok)throw Error(j.error?.code||'SERVER_ERROR');return j.data}
-function message(code:string,vi:boolean){const texts:Record<string,[string,string]>={FORBIDDEN:['Only the team creator can do this.','Chỉ người tạo team mới có quyền thực hiện.'],TEAM_CONFIRMATION:['The team name does not match. Refresh and try again.','Tên team xác nhận chưa khớp. Hãy tải lại và thử lại.'],VALIDATION:['Enter a name of 1–80 characters and a description of at most 500 characters.','Nhập tên từ 1–80 ký tự và mô tả tối đa 500 ký tự.']};return (texts[code]||['Could not save. Refresh and try again.','Chưa lưu được. Hãy tải lại và thử lại.'])[vi?1:0]}
+function message(code:string,vi:boolean){const texts:Record<string,[string,string]>={WEBSITE_INVALID:['Enter a valid HTTP or HTTPS website without credentials.','Nhập link website HTTP/HTTPS hợp lệ, không kèm thông tin đăng nhập.'],FORBIDDEN:['Only the team creator can do this.','Chỉ người tạo team mới có quyền thực hiện.'],TEAM_CONFIRMATION:['The team name does not match. Refresh and try again.','Tên team xác nhận chưa khớp. Hãy tải lại và thử lại.'],VALIDATION:['Enter a name of 1–80 characters and a description of at most 500 characters.','Nhập tên từ 1–80 ký tự và mô tả tối đa 500 ký tự.']};return (texts[code]||['Could not save. Refresh and try again.','Chưa lưu được. Hãy tải lại và thử lại.'])[vi?1:0]}
 export default function TeamSettings({team,lang,onSaved,onDeleted}:{team:Team;lang:string;onSaved:()=>Promise<void>;onDeleted:()=>Promise<void>}){
  const vi=lang==='vi',t=(en:string,v:string)=>vi?v:en;
  const [editing,setEditing]=useState(false),[deleting,setDeleting]=useState(false),[name,setName]=useState(team.name),[description,setDescription]=useState(team.description),[confirmation,setConfirmation]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -20,4 +20,15 @@ export function DeletedTeams({lang,onRestored,refreshKey}:{lang:string;onRestore
  useEffect(()=>{let active=true;send('/trash','GET').then(data=>{if(active)setRows(data)}).catch(e=>{if(active)setError(message(e.message,vi))});return()=>{active=false}},[refreshKey]);
  async function restore(id:string){setBusy(true);setError('');try{await send('/'+id+'/restore','POST',{});setRows(old=>old.filter(tm=>tm.id!==id));await onRestored(id)}catch(e){setError(message(e instanceof Error?e.message:'',vi))}finally{setBusy(false)}}
  return <section className="team-settings"><button className="text-button" aria-expanded={open} onClick={()=>setOpen(!open)}><Trash2 size={15}/>{t('Deleted teams','Team đã xóa')} ({rows.length})</button>{open&&<><p className="muted">{t('Only teams you created appear here. Restoring brings back the team and its data.','Chỉ hiển thị team do bạn tạo. Khôi phục sẽ đưa team và dữ liệu trở lại.')}</p>{rows.length===0&&<p className="empty-inline">{t('No deleted teams.','Không có team đã xóa.')}</p>}{rows.map(tm=><article className="deleted-team-row" key={tm.id}><div><strong>{tm.name}</strong><p>{tm.description}</p></div><button className="btn small-btn" disabled={busy} onClick={()=>restore(tm.id)}><RotateCcw size={14}/>{t('Restore team','Khôi phục team')}</button></article>)}</>}{error&&<p className="error" role="alert">{error}</p>}</section>
+}
+
+export function TeamWebsite({team,canEdit,lang,onSaved}:{team:Team;canEdit:boolean;lang:string;onSaved:()=>Promise<void>}){
+ const vi=lang==='vi',t=(en:string,v:string)=>vi?v:en;
+ const [website,setWebsite]=useState(team.website||''),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState('');
+ useEffect(()=>{setWebsite(team.website||'')},[team.id,team.website]);
+ return <section className="review-card"><h2>{t('Team activity website','Website hoạt động của nhóm')}</h2>
+ {team.website?<><p style={{overflowWrap:'anywhere'}}>{team.website}</p><a className="btn" href={team.website} target="_blank" rel="noopener noreferrer">{t('Open team website','Mở website hoạt động của nhóm')}</a></>:<p>{t('This team has not added a website.','Nhóm chưa có link website hoạt động.')}</p>}
+ {canEdit&&<form onSubmit={async e=>{e.preventDefault();setBusy(true);setNotice('');setError('');try{await send('/'+team.id+'/website','PATCH',{website});await onSaved();setNotice(t('Website saved.','Đã lưu link website của nhóm.'))}catch(e:any){setError(message(e.message,vi))}finally{setBusy(false)}}}>
+ <label className="field">{t('Paste the team website','Dán link website hoạt động')}<input type="text" inputMode="url" maxLength={2048} placeholder="https://example.com" value={website} onChange={e=>setWebsite(e.target.value)}/></label><button className="btn" disabled={busy}>{t('Save website link','Lưu link website')}</button><p>{t('Clear the field and save to remove the link.','Để trống rồi lưu nếu muốn gỡ link.')}</p></form>}
+ {notice&&<p role="status">{notice}</p>}{error&&<p role="alert">{error}</p>}</section>;
 }
