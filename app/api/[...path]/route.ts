@@ -1,4 +1,4 @@
-import {localDay,shiftMinutes} from '../../../lib/attendance';
+import {localDay,shiftMinutes,netShiftMinutes} from '../../../lib/attendance';
 import {attendancePayroll,closeAttendanceMonths} from '../../../lib/attendance-payroll';
 import {aptisPhotoKey,aptisPhotoSlots} from '../../../lib/aptis-photos';
 import aptisVocabulary from '../../../lib/data/aptis-vocabulary.json';
@@ -390,7 +390,7 @@ async function handle(req:Request){
    await closeAttendanceMonths();
    const rows=await db.select().from(attendanceEntries).where(admin?undefined:eq(attendanceEntries.userId,user.id));
    const employees=await db.select().from(employeeAssignments).where(admin?undefined:eq(employeeAssignments.userId,user.id));
-   return ok({rows:rows.filter(row=>row.day.startsWith(period)),employees,admin,ownerAdmin});
+   return ok({rows:rows.filter(row=>row.day.startsWith(period)),employees,admin,ownerAdmin,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
   }
   if(path[1]==='preview'||path[1]==='sync'){
    check(admin,'FORBIDDEN',403);check(method==='POST');
@@ -403,12 +403,15 @@ async function handle(req:Request){
     await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id)).for('update');
     const rows=await tx.select().from(attendanceEntries).where(eq(attendanceEntries.userId,user.id)).for('update');
     const opened=rows.find(row=>!row.end),time=now();
+    const breakMinutes=body.breakMinutes??opened?.breakMinutes??0;
+    check(Number.isInteger(breakMinutes)&&breakMinutes>=0&&breakMinutes<=1440,'INVALID_BREAK');
     if(body.action==='in'){
      check(!opened&&!rows.some(row=>row.day===localDay()),'ALREADY_CLOCKED',409);
-     await tx.insert(attendanceEntries).values({id:uid(),userId:user.id,day:localDay(),start:time,reason:'',updatedBy:user.id,updatedAt:time});
+     await tx.insert(attendanceEntries).values({id:uid(),userId:user.id,day:localDay(),start:time,breakMinutes,reason:'',updatedBy:user.id,updatedAt:time});
     }else{
      check(opened,'NO_OPEN_SHIFT',409);try{shiftMinutes(opened.start,time)}catch{throw new ApiError('INVALID_SHIFT')}
-     await tx.update(attendanceEntries).set({end:time,updatedBy:user.id,updatedAt:time}).where(eq(attendanceEntries.id,opened.id));
+     check(breakMinutes<=shiftMinutes(opened.start,time),'INVALID_BREAK');
+     await tx.update(attendanceEntries).set({end:time,breakMinutes,updatedBy:user.id,updatedAt:time}).where(eq(attendanceEntries.id,opened.id));
     }
     return ok(null);
    });
@@ -423,7 +426,9 @@ async function handle(req:Request){
    }else{
     const start=str(body.start,32),end=str(body.end,32),reason=str(body.reason,1000);
     try{shiftMinutes(start,end)}catch{throw new ApiError('INVALID_SHIFT')}check(localDay(new Date(start))===row.day);
-    const data={start:new Date(start).toISOString(),end:new Date(end).toISOString(),reason,editable:0,updatedBy:user.id,updatedAt:now()};
+    const breakMinutes=body.breakMinutes??row.breakMinutes;
+    try{netShiftMinutes(start,end,breakMinutes)}catch{throw new ApiError('INVALID_BREAK')}
+    const data={start:new Date(start).toISOString(),end:new Date(end).toISOString(),breakMinutes,reason,editable:0,updatedBy:user.id,updatedAt:now()};
     await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{before:row,after:data},createdAt:now()});
     await tx.update(attendanceEntries).set(data).where(eq(attendanceEntries.id,row.id));
    }

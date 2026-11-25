@@ -10,7 +10,7 @@ export async function attendancePayroll(period:string,commit=false,onlyMissing=f
  const result=[];
  for(const employee of employees){
   const shifts=entries.filter(row=>row.userId===employee.userId&&row.end);
-  const minutes=shifts.reduce((sum,row)=>sum+monthMinutes(row.day,row.start,row.end!,period),0);
+  const minutes=shifts.reduce((sum,row)=>sum+monthMinutes(row.day,row.start,row.end!,period,row.breakMinutes),0);
   const id=createHash('sha256').update('attendance:'+employee.userId+':'+period).digest('hex').slice(0,36);
   const [existing]=await db.select().from(payrollEntries).where(eq(payrollEntries.id,id));
   const previous=(existing?.data||{}) as Record<string,any>;

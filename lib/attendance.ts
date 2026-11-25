@@ -4,10 +4,17 @@ export function shiftMinutes(start:string,end:string){
  if(!Number.isFinite(minutes)||minutes<=0||minutes>24*60)throw Error('INVALID_SHIFT');
  return Math.floor(minutes);
 }
-export function monthMinutes(day:string,start:string,end:string,period:string){
- shiftMinutes(start,end);
+export function netShiftMinutes(start:string,end:string,breakMinutes=0){
+ const total=shiftMinutes(start,end);
+ if(!Number.isInteger(breakMinutes)||breakMinutes<0||breakMinutes>total)throw Error('INVALID_BREAK');
+ return total-breakMinutes;
+}
+export function monthMinutes(day:string,start:string,end:string,period:string,breakMinutes=0){
+ const gross=shiftMinutes(start,end),net=netShiftMinutes(start,end,breakMinutes);
  const [year,month]=period.split('-').map(Number);
  const from=Date.parse(`${period}-01T00:00:00+07:00`);
  const to=Date.UTC(year,month,1)-7*3600000;
- return Math.max(0,Math.floor((Math.min(Date.parse(end),to)-Math.max(Date.parse(start),from))/60000));
+ const elapsed=(boundary:number)=>Math.max(0,Math.min(gross,Math.floor((boundary-Date.parse(start))/60000)));
+ // Allocate net minutes across boundaries without losing or duplicating a minute.
+ return Math.max(0,Math.floor(elapsed(to)*net/gross)-Math.floor(elapsed(from)*net/gross));
 }

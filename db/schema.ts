@@ -61,6 +61,7 @@ export const employeeAssignments=mysqlTable('employee_assignments',{
 export const attendanceEntries=mysqlTable('attendance_entries',{
  id:id().primaryKey(),userId:id('user_id').notNull().references(()=>users.id),
  day:varchar('day',{length:10}).notNull(),start:iso('start').notNull(),end:iso('end'),
+ breakMinutes:int('break_minutes').notNull().default(0),
  editable:int('editable').notNull().default(0),reason:text('reason').notNull(),
  updatedBy:id('updated_by').notNull(),updatedAt:iso('updated_at').notNull(),
 },t=>[uniqueIndex('attendance_user_day').on(t.userId,t.day)]);
