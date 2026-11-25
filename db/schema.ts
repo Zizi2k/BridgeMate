@@ -98,3 +98,8 @@ export const salaryPayments=mysqlTable('salary_payments',{
 export const salaryPaymentBatches=mysqlTable('salary_payment_batches',{
  id:id().primaryKey(),requestHash:varchar('request_hash',{length:64}).notNull(),recipientId:id('recipient_id').notNull(),departmentId:varchar('department_id',{length:36}).notNull(),createdBy:id('created_by').notNull(),createdAt:iso('created_at').notNull(),
 });
+
+export const attendanceNotifications=mysqlTable('attendance_notifications',{
+ id:varchar('id',{length:64}).primaryKey(),entryId:id('entry_id').notNull(),recipientId:id('recipient_id').notNull(),email:varchar('email',{length:254}).notNull(),payload:json('payload').notNull(),
+ status:varchar('status',{length:16}).notNull().default('pending'),attempts:int('attempts').notNull().default(0),firstAttemptAt:iso('first_attempt_at'),createdAt:iso('created_at').notNull(),sentAt:iso('sent_at'),readAt:iso('read_at'),lastError:varchar('last_error',{length:80}).notNull().default(''),
+},t=>[index('attendance_notification_status').on(t.status,t.createdAt)]);

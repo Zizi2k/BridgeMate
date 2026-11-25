@@ -1,3 +1,5 @@
+import {after} from 'next/server';
+import {queueAttendanceMail,flushAttendanceMail,attendanceMailConfigured} from '../../../lib/attendance-email';
 import {settlePayroll,consolidateArrears,allocateSalary} from '../../../lib/payroll-arrears';
 import {historicalAttendance,overlapsAttendance} from '../../../lib/attendance-supplement';
 import {teamWebsite,canEditTeamWebsite} from '../../../lib/team-website';
@@ -25,7 +27,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications} from '../../../db/schema';
 import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -518,6 +520,19 @@ async function handle(req:Request){
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
   return ok({slips,template:{...printDefaults,...template?.data as object}});
  }
+ if(path[0]==='attendance-notifications'){
+  check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+  const scope=and(eq(attendanceNotifications.recipientId,user.id),ownerAdmin?undefined:sql`JSON_UNQUOTE(JSON_EXTRACT(${attendanceNotifications.payload}, '$.departmentId')) = ${currentDepartment.departmentId}`);
+  if(method==='GET'){
+   const rows=await db.select({id:attendanceNotifications.id,payload:attendanceNotifications.payload,createdAt:attendanceNotifications.createdAt,readAt:attendanceNotifications.readAt}).from(attendanceNotifications).where(scope).orderBy(desc(attendanceNotifications.createdAt)).limit(50);
+   const [count]=await db.select({value:sql<number>`COUNT(*)`}).from(attendanceNotifications).where(and(scope,isNull(attendanceNotifications.readAt)));
+   return ok({rows:rows.map(row=>({id:row.id,subject:(row.payload as any).subject,text:(row.payload as any).text,createdAt:row.createdAt,readAt:row.readAt})),unread:Number(count.value)});
+  }
+  check(method==='POST');
+  check(body.all===true||typeof body.id==='string');
+  await db.update(attendanceNotifications).set({readAt:now()}).where(and(scope,isNull(attendanceNotifications.readAt),body.all===true?undefined:eq(attendanceNotifications.id,body.id)));
+  return ok({read:true});
+ }
  if(path[0]==='attendance'){
   check(!user.demo,'FORBIDDEN',403);
   const period=url.searchParams.get('period')||localDay().slice(0,7);
@@ -530,7 +545,7 @@ async function handle(req:Request){
    const rows=await db.select().from(attendanceEntries).where(ownerAdmin?undefined:inArray(attendanceEntries.userId,ids));
    const employees=await db.select().from(employeeAssignments).where(ownerAdmin?undefined:inArray(employeeAssignments.userId,ids));
    const pendingPhotos=rows.length?await db.select({entryId:attendancePhotos.entryId}).from(evidenceChangeRequests).innerJoin(attendancePhotos,eq(attendancePhotos.id,evidenceChangeRequests.photoId)).where(and(eq(evidenceChangeRequests.status,'pending'),gt(attendancePhotos.expiresAt,now()),inArray(attendancePhotos.entryId,rows.map(row=>row.id)))):[];
-   return ok({photoChangeEntryIds:[...new Set(pendingPhotos.map(row=>row.entryId))],rows:rows.filter(row=>row.day.startsWith(period)),employees,currentUserId:user.id,admin:ownerAdmin||departmentManager,ownerAdmin,departmentName:currentDepartment?((await db.select().from(departments).where(eq(departments.id,currentDepartment.departmentId)))[0]?.name):null,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
+   return ok({mailConfigured:ownerAdmin?attendanceMailConfigured():undefined,photoChangeEntryIds:[...new Set(pendingPhotos.map(row=>row.entryId))],rows:rows.filter(row=>row.day.startsWith(period)),employees,currentUserId:user.id,admin:ownerAdmin||departmentManager,ownerAdmin,departmentName:currentDepartment?((await db.select().from(departments).where(eq(departments.id,currentDepartment.departmentId)))[0]?.name):null,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
   }
   if(path[1]==='preview'||path[1]==='sync'){
    check(ownerAdmin||departmentManager,'FORBIDDEN',403);check(method==='POST');
@@ -557,22 +572,26 @@ async function handle(req:Request){
    check(ownerAdmin||currentDepartment?.active&&currentDepartment.status==='approved','DEPARTMENT_REQUIRED',403);
    check(assignment&&normalizeEmployeeCode(str(body.code,32))===assignment.code&&str(body.name,120).normalize('NFC')===assignment.name.normalize('NFC'),'EMPLOYEE_MISMATCH',403);
    check(body.action==='in'||body.action==='out');
-   return db.transaction(async tx=>{
+   const result=await db.transaction(async tx=>{
     await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id)).for('update');
     const rows=await tx.select().from(attendanceEntries).where(eq(attendanceEntries.userId,user.id)).for('update');
-    const opened=rows.find(row=>!row.end),time=now();
+    const opened=rows.find(row=>!row.end),time=now(),entryId=opened?.id||uid();
     const breakMinutes=body.breakMinutes??opened?.breakMinutes??0;
     check(Number.isInteger(breakMinutes)&&breakMinutes>=0&&breakMinutes<=1440,'INVALID_BREAK');
     if(body.action==='in'){
      check(!opened&&!rows.some(row=>row.day===localDay()),'ALREADY_CLOCKED',409);
-     await tx.insert(attendanceEntries).values({id:uid(),userId:user.id,day:localDay(),start:time,breakMinutes,reason:'',updatedBy:user.id,updatedAt:time});
+     await tx.insert(attendanceEntries).values({id:entryId,userId:user.id,day:localDay(),start:time,breakMinutes,reason:'',updatedBy:user.id,updatedAt:time});
     }else{
      check(opened,'NO_OPEN_SHIFT',409);try{shiftMinutes(opened.start,time)}catch{throw new ApiError('INVALID_SHIFT')}
      check(breakMinutes<=shiftMinutes(opened.start,time),'INVALID_BREAK');
      await tx.update(attendanceEntries).set({end:time,breakMinutes,updatedBy:user.id,updatedAt:time}).where(eq(attendanceEntries.id,opened.id));
     }
-    return ok({id:opened?.id||(await tx.select({id:attendanceEntries.id}).from(attendanceEntries).where(and(eq(attendanceEntries.userId,user.id),eq(attendanceEntries.day,localDay()))))[0]?.id});
+    const [department]=currentDepartment?.departmentId?await tx.select({name:departments.name}).from(departments).where(eq(departments.id,currentDepartment.departmentId)):[];
+    await queueAttendanceMail(tx,entryId,currentDepartment?.departmentId||'',{name:assignment.name,code:assignment.code,department:department?.name||'',action:body.action,start:opened?.start||time,end:body.action==='out'?time:null,breakMinutes,replyTo:user.email});
+    return {id:entryId};
    });
+   after(async()=>{try{await flushAttendanceMail()}catch{console.error("ATTENDANCE_MAIL_DISPATCH_FAILED")}});
+   return ok(result);
   }
   if(path[1]&&path[2]==='photos'){
    await purgeAttendancePhotos();
