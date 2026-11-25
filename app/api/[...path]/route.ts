@@ -1,5 +1,7 @@
+import {payrollPdf,payrollXlsx} from '../../../lib/payroll-export';
+import {validReportYear,payrollReportKey} from '../../../lib/payroll-report';
 import {canManageDepartment,searchEmployee} from '../../../lib/department-policy';
-import {MAX_EVIDENCE_BYTES,imageFilenameAllowed,evidenceExpiry,evidencePreviewMime} from '../../../lib/attendance-evidence';
+import {MAX_EVIDENCE_BYTES,imageFilenameAllowed,evidenceExpiry,evidencePreviewMime,canUploadEvidence,canReplaceEvidence,canRequestEvidenceChange} from '../../../lib/attendance-evidence';
 import {purgeAttendancePhotos} from '../../../lib/attendance-photo-cleanup';
 import {localDay,shiftMinutes,netShiftMinutes} from '../../../lib/attendance';
 import {attendancePayroll,closeAttendanceMonths} from '../../../lib/attendance-payroll';
@@ -20,7 +22,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests} from '../../../db/schema';
 import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -332,25 +334,34 @@ async function handle(req:Request){
  }
  if(path[0]==='department-payroll'&&method==='GET'){
   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
-  const period=url.searchParams.get('period')||localDay().slice(0,7);check(payPeriodPattern.test(period));
+  const year=url.searchParams.get('year'),period=year||url.searchParams.get('period')||localDay().slice(0,7);check(year?validReportYear(year):payPeriodPattern.test(period));
   const departmentId=ownerAdmin?(url.searchParams.get('departmentId')||''):currentDepartment.departmentId;
   const memberships=await db.select({userId:accountDepartments.userId,departmentId:accountDepartments.departmentId,departmentName:departments.name}).from(accountDepartments).innerJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(and(eq(accountDepartments.status,'approved'),!ownerAdmin?eq(accountDepartments.departmentId,departmentId):undefined));
   const departmentNames=await db.select().from(departments);
   const ids=memberships.map(row=>row.userId);
   const query=searchEmployee((url.searchParams.get('q')||'').slice(0,120));
-  const rows=await db.select().from(payrollEntries).where(and(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`,like(payrollEntries.scopeId,'team:%'),ownerAdmin?undefined:ids.length?inArray(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId'))`,ids):sql`false`));
+  const rows=await db.select().from(payrollEntries).where(and(year?like(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period'))`,year+'-%'):sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`,like(payrollEntries.scopeId,'team:%'),ownerAdmin?undefined:ids.length?inArray(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId'))`,ids):sql`false`));
   const visible:Array<Record<string,any>>=rows.flatMap(row=>{
    const data=row.data as Record<string,any>,membership=memberships.find(member=>member.userId===data.recipientId);
    if(!ownerAdmin&&(!membership||data.departmentId&&data.departmentId!==departmentId))return [];
    const payrollDepartmentId=data.departmentId||membership?.departmentId||'';
    if(ownerAdmin&&departmentId&&payrollDepartmentId!==departmentId)return [];
+   if(url.searchParams.get('reportKey')&&payrollReportKey({...data,departmentId:payrollDepartmentId})!==url.searchParams.get('reportKey'))return [];
+   if(url.searchParams.get('employeeId')&&data.recipientId!==url.searchParams.get('employeeId'))return [];
    if(query&&!searchEmployee((data.employeeCode||'')+' '+(data.worker||'')).includes(query))return [];
    return [{...data,id:row.id,departmentId:payrollDepartmentId,departmentName:departmentNames.find(department=>department.id===payrollDepartmentId)?.name||'Chưa phân phòng ban'}];
   });
   const totals:Record<string,{name:string;total:number;hours:number;balance:number}>={};
   for(const row of visible){const group=totals[row.departmentId]??={name:row.departmentName,total:0,hours:0,balance:0};group.total+=Number(row.total)||0;group.hours+=Number(row.hours)||0;group.balance+=Number(row.balance)||0}
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll'));
-  return ok({rows:visible,totals:Object.values(totals),template:{...printDefaults,...template?.data as object}});
+  const printTemplate={...printDefaults,...template?.data as object};
+  if(path[1]==='export'){
+   const format=url.searchParams.get('format'),kind=url.searchParams.get('kind');check((format==='xlsx'||format==='pdf')&&(kind==='ledger'||kind==='slips'));
+   const bytes=format==='xlsx'?await payrollXlsx(visible,kind,period,printTemplate.company):await payrollPdf(visible,kind,period,printTemplate);
+   const filename=(kind==='ledger'?'Bang_luong_':'Phieu_luong_')+period+'.'+format;
+   return new Response(Buffer.from(bytes),{headers:{'Content-Type':format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/pdf','Content-Disposition':`attachment; filename="${filename}"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+  }
+  return ok({rows:visible,totals:Object.values(totals),template:printTemplate});
  }
  if(path[0]==='admin'){
   check(admin,'FORBIDDEN',403);
@@ -452,7 +463,8 @@ async function handle(req:Request){
    const ids=permitted.length?permitted:[user.id];
    const rows=await db.select().from(attendanceEntries).where(ownerAdmin?undefined:inArray(attendanceEntries.userId,ids));
    const employees=await db.select().from(employeeAssignments).where(ownerAdmin?undefined:inArray(employeeAssignments.userId,ids));
-   return ok({rows:rows.filter(row=>row.day.startsWith(period)),employees,currentUserId:user.id,admin:ownerAdmin||departmentManager,ownerAdmin,departmentName:currentDepartment?((await db.select().from(departments).where(eq(departments.id,currentDepartment.departmentId)))[0]?.name):null,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
+   const pendingPhotos=rows.length?await db.select({entryId:attendancePhotos.entryId}).from(evidenceChangeRequests).innerJoin(attendancePhotos,eq(attendancePhotos.id,evidenceChangeRequests.photoId)).where(and(eq(evidenceChangeRequests.status,'pending'),gt(attendancePhotos.expiresAt,now()),inArray(attendancePhotos.entryId,rows.map(row=>row.id)))):[];
+   return ok({photoChangeEntryIds:[...new Set(pendingPhotos.map(row=>row.entryId))],rows:rows.filter(row=>row.day.startsWith(period)),employees,currentUserId:user.id,admin:ownerAdmin||departmentManager,ownerAdmin,departmentName:currentDepartment?((await db.select().from(departments).where(eq(departments.id,currentDepartment.departmentId)))[0]?.name):null,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
   }
   if(path[1]==='preview'||path[1]==='sync'){
    check(ownerAdmin||departmentManager,'FORBIDDEN',403);check(method==='POST');
@@ -489,16 +501,41 @@ async function handle(req:Request){
     const bytes=Buffer.from(photo.data,'base64'),preview=evidencePreviewMime(bytes);
     return new Response(bytes,{headers:{'Content-Type':preview||'application/octet-stream','Content-Disposition':`${preview?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(photo.name)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"}});
    }
-   if(method==='GET')return ok(await db.select({id:attendancePhotos.id,name:attendancePhotos.name,createdAt:attendancePhotos.createdAt,expiresAt:attendancePhotos.expiresAt}).from(attendancePhotos).where(and(eq(attendancePhotos.entryId,entry.id),gt(attendancePhotos.expiresAt,now()))));
+   if(method==='GET')return ok(await db.select({id:attendancePhotos.id,name:attendancePhotos.name,mime:attendancePhotos.mime,createdAt:attendancePhotos.createdAt,expiresAt:attendancePhotos.expiresAt,changeReason:evidenceChangeRequests.reason,changeStatus:evidenceChangeRequests.status,requestedAt:evidenceChangeRequests.requestedAt}).from(attendancePhotos).leftJoin(evidenceChangeRequests,eq(evidenceChangeRequests.photoId,attendancePhotos.id)).where(and(eq(attendancePhotos.entryId,entry.id),gt(attendancePhotos.expiresAt,now()))));
+   if(method==='POST'&&path[3]&&path[4]==='request-change'){
+    check(canRequestEvidenceChange(ownerAdmin,await managesEmployee(entry.userId),owns),'FORBIDDEN',403);
+    const reason=str(body.reason,1000),requestedAt=now();
+    await db.transaction(async tx=>{
+     const [photo]=await tx.select().from(attendancePhotos).where(and(eq(attendancePhotos.id,path[3]),eq(attendancePhotos.entryId,entry.id),gt(attendancePhotos.expiresAt,now()))).for('update');check(photo,'NOT_FOUND',404);
+     await tx.insert(evidenceChangeRequests).values({photoId:photo.id,reason,requestedBy:user.id,requestedAt,status:'pending'}).onDuplicateKeyUpdate({set:{reason,requestedBy:user.id,requestedAt,status:'pending',resolvedAt:null}});
+     await tx.insert(attendanceAudit).values({id:uid(),entryId:entry.id,actorId:user.id,data:{action:'evidence-change-request',photoId:photo.id,reason},createdAt:requestedAt});
+    });
+    return ok(null);
+   }
+   if(method==='PATCH'&&path[3]&&!path[4]){
+    const name=str(body.name,180).replace(/[\\/\r\n]/g,'_'),mime=typeof body.mime==='string'?body.mime.slice(0,120):'';
+    check(imageFilenameAllowed(name,mime),'IMAGE_FORMAT');
+    const data=str(body.data,MAX_EVIDENCE_BYTES*4/3+4);check(/^[A-Za-z0-9+/]+={0,2}$/.test(data),'IMAGE_FORMAT');
+    const bytes=Buffer.from(data,'base64');check(bytes.length>0&&bytes.length<=MAX_EVIDENCE_BYTES,'IMAGE_TOO_LARGE');
+    const createdAt=now(),expiresAt=evidenceExpiry(createdAt);
+    return db.transaction(async tx=>{
+     const [photo]=await tx.select().from(attendancePhotos).where(and(eq(attendancePhotos.id,path[3]),eq(attendancePhotos.entryId,entry.id),gt(attendancePhotos.expiresAt,now()))).for('update');check(photo,'NOT_FOUND',404);
+     const [request]=await tx.select().from(evidenceChangeRequests).where(eq(evidenceChangeRequests.photoId,photo.id)).for('update');
+     check(canReplaceEvidence(ownerAdmin,owns,request?.status==='pending'),'FORBIDDEN',403);
+     await tx.update(attendancePhotos).set({name,mime:evidencePreviewMime(bytes)||'application/octet-stream',data,createdAt,expiresAt}).where(eq(attendancePhotos.id,photo.id));
+     if(request)await tx.update(evidenceChangeRequests).set({status:'resolved',resolvedAt:createdAt}).where(eq(evidenceChangeRequests.photoId,photo.id));
+     await tx.insert(attendanceAudit).values({id:uid(),entryId:entry.id,actorId:user.id,data:{action:'evidence-replaced',photoId:photo.id,previousName:photo.name,newName:name},createdAt});
+     return ok({id:photo.id,name,createdAt,expiresAt},200);
+    });
+   }
    if(method==='POST'&&!path[3]){
-    check(owns||await managesEmployee(entry.userId),'FORBIDDEN',403);
-    check(owns?(!entry.end||Date.now()-Date.parse(entry.end)<15*60000||!!entry.editable):true,'FORBIDDEN',403);
+    check(canUploadEvidence(ownerAdmin,owns,!entry.end||Date.now()-Date.parse(entry.end)<15*60000||!!entry.editable),'FORBIDDEN',403);
     const name=str(body.name,180).replace(/[\\/\r\n]/g,'_'),mime=typeof body.mime==='string'?body.mime.slice(0,120):'';
     check(imageFilenameAllowed(name,mime),'IMAGE_FORMAT');
     const data=str(body.data,MAX_EVIDENCE_BYTES*4/3+4);check(/^[A-Za-z0-9+/]+={0,2}$/.test(data),'IMAGE_FORMAT');
     const bytes=Buffer.from(data,'base64');check(bytes.length>0&&bytes.length<=MAX_EVIDENCE_BYTES,'IMAGE_TOO_LARGE');
     const id=uid(),createdAt=now(),expiresAt=evidenceExpiry(createdAt);
-    await db.transaction(async tx=>{await tx.select({id:attendanceEntries.id}).from(attendanceEntries).where(eq(attendanceEntries.id,entry.id)).for('update');const existing=await tx.select({id:attendancePhotos.id}).from(attendancePhotos).where(eq(attendancePhotos.entryId,entry.id));check(existing.length<10,'PHOTO_LIMIT');await tx.insert(attendancePhotos).values({id,entryId:entry.id,name,mime,data,createdAt,expiresAt})});
+    await db.transaction(async tx=>{await tx.select({id:attendanceEntries.id}).from(attendanceEntries).where(eq(attendanceEntries.id,entry.id)).for('update');const existing=await tx.select({id:attendancePhotos.id}).from(attendancePhotos).where(eq(attendancePhotos.entryId,entry.id));check(existing.length<10,'PHOTO_LIMIT');await tx.insert(attendancePhotos).values({id,entryId:entry.id,name,mime:evidencePreviewMime(bytes)||'application/octet-stream',data,createdAt,expiresAt})});
     return ok({id,name,createdAt,expiresAt},201);
    }
    throw new ApiError('NOT_FOUND',404);

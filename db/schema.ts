@@ -82,3 +82,8 @@ export const attendancePhotos=mysqlTable('attendance_photos',{
  name:varchar('name',{length:180}).notNull(),mime:varchar('mime',{length:120}).notNull(),data:mediumtext('data').notNull(),
  createdAt:iso('created_at').notNull(),expiresAt:iso('expires_at').notNull(),
 },t=>[index('attendance_photos_expiry').on(t.expiresAt),index('attendance_photos_entry').on(t.entryId)]);
+export const evidenceChangeRequests=mysqlTable('evidence_change_requests',{
+ photoId:id('photo_id').primaryKey().references(()=>attendancePhotos.id,{onDelete:'cascade'}),
+ reason:text('reason').notNull(),requestedBy:id('requested_by').notNull(),requestedAt:iso('requested_at').notNull(),
+ status:varchar('status',{length:12}).notNull(),resolvedAt:iso('resolved_at'),
+});

@@ -16,3 +16,6 @@ export function evidencePreviewMime(bytes:Uint8Array){
  if(ascii(4,8)==='ftyp'&&['avif','avis'].includes(ascii(8,12)))return 'image/avif';
  return null;
 }
+export function canUploadEvidence(ownerAdmin:boolean,owns:boolean,withinWindow:boolean){return ownerAdmin||owns&&withinWindow}
+export function canReplaceEvidence(ownerAdmin:boolean,owns:boolean,requested:boolean){return ownerAdmin||owns&&requested}
+export function canRequestEvidenceChange(ownerAdmin:boolean,managesEmployee:boolean,owns:boolean){return ownerAdmin||managesEmployee&&!owns}

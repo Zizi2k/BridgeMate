@@ -1,0 +1,1 @@
+CREATE TABLE evidence_change_requests (photo_id VARCHAR(36) PRIMARY KEY,reason TEXT NOT NULL,requested_by VARCHAR(36) NOT NULL,requested_at VARCHAR(32) NOT NULL,status VARCHAR(12) NOT NULL,resolved_at VARCHAR(32),FOREIGN KEY (photo_id) REFERENCES attendance_photos(id) ON DELETE CASCADE);

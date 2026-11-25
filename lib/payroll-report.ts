@@ -1,0 +1,13 @@
+export type PayrollReportRow={id:string;recipientId:string;worker:string;employeeCode:string;departmentId:string;departmentName:string;period:string;hours:number;total:number;advance:number;balance:number;commission:number;work:string};
+export const payrollReportKey=(row:Record<string,any>)=>JSON.stringify([row.recipientId||row.worker,row.departmentId||'',row.period]);
+export function groupPayrollReport(rows:Record<string,any>[]):PayrollReportRow[]{
+ const groups=new Map<string,PayrollReportRow>();
+ for(const row of rows){
+  const key=payrollReportKey(row);
+  const group=groups.get(key)||{id:row.id,recipientId:row.recipientId||'',worker:row.worker||'',employeeCode:row.employeeCode||'',departmentId:row.departmentId||'',departmentName:row.departmentName||'Chưa phân phòng ban',period:row.period||'',hours:0,total:0,advance:0,balance:0,commission:0,work:'Chấm công và lương tháng'};
+  for(const field of ['hours','total','advance','balance','commission'] as const){const value=Number(row[field]);group[field]+=Number.isFinite(value)?value:0}
+  groups.set(key,group);
+ }
+ return [...groups.values()].sort((a,b)=>a.departmentName.localeCompare(b.departmentName,'vi')||a.worker.localeCompare(b.worker,'vi')||a.period.localeCompare(b.period));
+}
+export function validReportYear(year:string){return /^\d{4}$/.test(year)&&Number(year)>=1900&&Number(year)<=2100}
