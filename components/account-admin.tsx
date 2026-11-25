@@ -92,7 +92,7 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
   {loading?<p role="status">{t('Loading accounts…','Đang tải tài khoản…')}</p>:
    <div className="members-grid">{rows.map(account=><article className="member-card" key={account.id}>
     <h3>{account.name}</h3><p style={{overflowWrap:'anywhere'}}>{account.email}</p>
-    <p>{account.accountRole==='admin'?t('Administrator','Quản trị viên'):t('Member','Thành viên')} · {account.suspended?t('Suspended','Đã khóa'):t('Active','Đang hoạt động')}</p>
+    <p>{account.accountRole==='admin'?t('Administrator','Quản trị viên'):account.accountRole==='manager'?t('Manager','Người quản lý'):t('Member','Thành viên')} · {account.suspended?t('Suspended','Đã khóa'):t('Active','Đang hoạt động')}</p>
     {ownerAdmin&&account.accountRole!=='admin'&&<EmployeeSetup account={account} saved={updated=>setRows(rows=>rows.map(row=>row.id===account.id?{...row,...updated}:row))}/>}
     {account.accountRole!=='admin'&&modules.filter(module=>ownerAdmin||module!=='links').map(module=><div key={module}>
      <strong>{moduleLabels[module][lang==='vi'?1:0]}</strong>
@@ -114,9 +114,10 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
 function EmployeeSetup({account,saved}:{account:Account;saved:(value:Partial<Account>)=>void}){
  const [code,setCode]=useState(account.employeeCode||''),[name,setName]=useState(account.employeeName||account.name),[rate,setRate]=useState(account.rate||0),[manager,setManager]=useState(account.accountRole==='manager'),[status,setStatus]=useState('');
  return <form onSubmit={async e=>{e.preventDefault();try{await request('/'+account.id,{employeeCode:code,employeeName:name,rate,manager});saved({employeeCode:code,employeeName:name,rate,accountRole:manager?'manager':'member'});setStatus('Đã lưu')}catch{setStatus('Không lưu được. Kiểm tra mã nhân viên có trùng không.')}}}>
+ <h4>Thông tin nhân viên và quyền quản lý</h4>
  <label>Mã nhân viên <input required maxLength={32} value={code} onChange={e=>setCode(e.target.value.toUpperCase())}/></label>
  <label>Tên nhân viên <input required maxLength={120} value={name} onChange={e=>setName(e.target.value)}/></label>
  <label>Lương mỗi giờ (đ) <input required type="number" min={0} max={1000000000} value={rate} onChange={e=>setRate(Number(e.target.value))}/></label>
- <label><input type="checkbox" checked={manager} onChange={e=>setManager(e.target.checked)}/> Người quản lý</label><button className="btn">Lưu nhân viên và quyền</button><p role="status">{status}</p>
+ <label><input type="checkbox" checked={manager} onChange={e=>setManager(e.target.checked)}/> Người quản lý</label><button className="btn primary">{manager?'Lưu và cấp quyền quản lý':'Lưu thông tin và quyền nhân viên'}</button><p role="status">{status}</p>
  </form>;
 }
