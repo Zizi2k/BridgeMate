@@ -1,3 +1,5 @@
+import {buildAttendanceReport} from '../../../lib/attendance-report';
+import {attendanceReportXlsx,attendanceReportPdf} from '../../../lib/attendance-report-export';
 import {dailyWork,replacementFits} from '../../../lib/daily-work';
 import {shouldQueueRecovery,validReplacementPassword} from '../../../lib/password-recovery-policy';
 import {canAssignManagedTask} from '../../../lib/managed-teams';
@@ -598,6 +600,26 @@ async function handle(req:Request){
   for(const statement of combined)if(!slips.some(row=>row.departmentId===statement.departmentId))slips.push(statement);
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
   return ok({slips,template:{...printDefaults,...template?.data as object}});
+ }
+ if(path[0]==='attendance-report'){
+  check(ownerAdmin||departmentManager,'FORBIDDEN',403);check(method==='GET'&&!path[1],'NOT_FOUND',404);
+  const period=url.searchParams.get('period')||localDay().slice(0,7);check(payPeriodPattern.test(period)&&/^(19|20)\d{2}$/.test(period.slice(0,4)));
+  const departmentId=url.searchParams.get('departmentId')||'';check(ownerAdmin||!departmentId||departmentId===currentDepartment.departmentId,'FORBIDDEN',403);
+  const allowed=ownerAdmin?null:await departmentEmployeeIds();
+  const people=await db.select({id:employeeAssignments.userId,code:employeeAssignments.code,name:employeeAssignments.name,departmentId:accountDepartments.departmentId,departmentName:departments.name}).from(employeeAssignments).innerJoin(users,eq(users.id,employeeAssignments.userId)).leftJoin(accountDepartments,eq(accountDepartments.userId,employeeAssignments.userId)).leftJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(and(eq(users.demo,0),allowed?inArray(employeeAssignments.userId,allowed.length?allowed:['']):undefined,departmentId?eq(accountDepartments.departmentId,departmentId):undefined));
+  const options=people.map(person=>({...person,departmentId:person.departmentId||'',departmentName:person.departmentName||'Chưa phân phòng ban'})).sort((a,b)=>a.name.localeCompare(b.name,'vi'));
+  const employeeId=url.searchParams.get('employeeId')||'';check(!employeeId||options.some(person=>person.id===employeeId),'FORBIDDEN',403);
+  const selected=options.filter(person=>!employeeId||person.id===employeeId),ids=selected.map(person=>person.id);
+  const monthStart=new Date(period+'-01T00:00:00+07:00').toISOString();
+  const entries=ids.length?await db.select().from(attendanceEntries).where(and(inArray(attendanceEntries.userId,ids),sql`(${attendanceEntries.day} LIKE ${period+'-%'} OR (${attendanceEntries.start} < ${monthStart} AND ${attendanceEntries.end} > ${monthStart}))`)):[];
+  const relevant=entries.filter(entry=>entry.day.startsWith(period)||entry.end&&Date.parse(entry.start)<Date.parse(period+'-01T00:00:00+07:00')&&Date.parse(entry.end)>Date.parse(period+'-01T00:00:00+07:00'));
+  const entryIds=relevant.map(entry=>entry.id);
+  const audits=entryIds.length?await db.select({entryId:attendanceAudit.entryId,data:attendanceAudit.data,createdAt:attendanceAudit.createdAt,actorName:users.name}).from(attendanceAudit).leftJoin(users,eq(users.id,attendanceAudit.actorId)).where(inArray(attendanceAudit.entryId,entryIds)).orderBy(attendanceAudit.createdAt):[];
+  const jobs=ids.length?await db.select().from(payrollEntries).where(and(eq(payrollEntries.scopeId,'team:daily-work'),sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`,inArray(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId'))`,ids),ownerAdmin?undefined:sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.departmentId')) = ${currentDepartment.departmentId}`)):[];
+  const report=buildAttendanceReport(period,selected,relevant,audits,jobs.map(row=>row.data));
+  const format=url.searchParams.get('format');
+  if(format){check(format==='xlsx'||format==='pdf');const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll'));const company=(template?.data as any)?.company||'BridgeMate';const bytes=format==='xlsx'?await attendanceReportXlsx(report,company):await attendanceReportPdf(report,company);return new Response(Buffer.from(bytes),{headers:{'Content-Type':format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/pdf','Content-Disposition':`attachment; filename="Bang_cham_cong_${period}${employeeId?'_ca_nhan':'_tap_the'}.${format}"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}})}
+  return ok({...report,employees:options});
  }
  if(path[0]==='attendance-notifications'){
   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
