@@ -1,0 +1,1 @@
+CREATE TABLE attendance_import_batches (id VARCHAR(36) PRIMARY KEY,actor_id VARCHAR(36) NOT NULL,request_hash VARCHAR(64) NOT NULL,inserted INT NOT NULL DEFAULT 0,skipped INT NOT NULL DEFAULT 0,created_at VARCHAR(32) NOT NULL);

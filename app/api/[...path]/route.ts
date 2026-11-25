@@ -1,3 +1,4 @@
+import {readAttendanceXlsx,previewAttendanceImport,IMPORT_MAX_BYTES} from '../../../lib/attendance-import';
 import {buildAttendanceReport} from '../../../lib/attendance-report';
 import {attendanceReportXlsx,attendanceReportPdf} from '../../../lib/attendance-report-export';
 import {dailyWork,replacementFits} from '../../../lib/daily-work';
@@ -32,7 +33,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications,passwordRecovery} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications,passwordRecovery,attendanceImportBatches} from '../../../db/schema';
 import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -58,7 +59,7 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<(path[0]==='attendance'&&path[2]==='photos'?4300000:path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
+ check(JSON.stringify(body).length<(path[0]==='attendance-import'?4300000:path[0]==='attendance'&&path[2]==='photos'?4300000:path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
  async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);const [employee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,u.id));const [department]=await db.select({id:departments.id,name:departments.name,status:accountDepartments.status}).from(accountDepartments).innerJoin(departments,and(eq(accountDepartments.departmentId,departments.id),eq(departments.active,1))).where(eq(accountDepartments.userId,u.id));return {...publicUser(u),departmentId:department?.id||'',departmentName:department?.name||'',departmentStatus:department?.status||'',accountRole:accountRole(u)==='admin'?'admin':employee?.manager?'manager':accountRole(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any,executor:any=db){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await executor.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
@@ -600,6 +601,32 @@ async function handle(req:Request){
   for(const statement of combined)if(!slips.some(row=>row.departmentId===statement.departmentId))slips.push(statement);
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
   return ok({slips,template:{...printDefaults,...template?.data as object}});
+ }
+ if(path[0]==='attendance-import'){
+  check(ownerAdmin,'FORBIDDEN',403);check(method==='POST'&&path.length===1,'NOT_FOUND',404);
+  check(body.action==='preview'||body.action==='commit');check(typeof body.skipExisting==='boolean');check(typeof body.file==='string'&&body.file.length<=Math.ceil(IMPORT_MAX_BYTES/3)*4&&/^[A-Za-z0-9+/]*={0,2}$/.test(body.file)&&body.file.length%4===0,'XLSX_SIZE');
+  const bytes=Buffer.from(body.file,'base64');let source:Awaited<ReturnType<typeof readAttendanceXlsx>>;try{source=await readAttendanceXlsx(bytes)}catch(error){throw new ApiError(error instanceof Error?error.message:'XLSX_INVALID')}
+  const codes=[...new Set(source.rows.map(row=>String(row.values[0]).trim().toUpperCase()))];
+  const people=await db.select({userId:employeeAssignments.userId,code:employeeAssignments.code,name:employeeAssignments.name}).from(employeeAssignments).innerJoin(users,eq(users.id,employeeAssignments.userId)).leftJoin(removedAccounts,eq(removedAccounts.userId,users.id)).where(and(inArray(employeeAssignments.code,codes.length?codes:['']),eq(users.demo,0),isNull(removedAccounts.userId)));
+  const ids=people.map(person=>person.userId).sort();
+  const existing=async(conn:any)=>ids.length?await conn.select().from(attendanceEntries).where(inArray(attendanceEntries.userId,ids)):[];
+  const summary=(rows:ReturnType<typeof previewAttendanceImport>)=>({ready:rows.filter(row=>row.status==='ready').length,skipped:rows.filter(row=>row.status==='skip').length,errors:rows.filter(row=>row.status==='error').length,total:rows.length});
+  if(body.action==='preview'){const rows=previewAttendanceImport(source,people,await existing(db),body.skipExisting);return ok({rows,...summary(rows)})}
+  const batchId=str(body.batchId,36);check(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(batchId));check(body.confirm===true);
+  const requestHash=createHash('sha256').update(bytes).update(String(body.skipExisting)).digest('hex');
+  return ok(await db.transaction(async tx=>{
+   await tx.insert(attendanceImportBatches).values({id:batchId,actorId:user.id,requestHash,createdAt:now()}).onDuplicateKeyUpdate({set:{id:sql`${attendanceImportBatches.id}`}});
+   const [batch]=await tx.select().from(attendanceImportBatches).where(eq(attendanceImportBatches.id,batchId)).for('update');check(batch.actorId===user.id&&batch.requestHash===requestHash,'CONFLICT',409);
+   if(batch.inserted||batch.skipped)return {inserted:batch.inserted,skipped:batch.skipped,reused:true};
+   const fresh=ids.length?await tx.select().from(employeeAssignments).where(inArray(employeeAssignments.userId,ids)).orderBy(employeeAssignments.userId).for('update'):[];
+   const removedPeople=ids.length?await tx.select().from(removedAccounts).where(inArray(removedAccounts.userId,ids)):[];
+   const employees=fresh.filter(person=>!removedPeople.some(removed=>removed.userId===person.userId));
+   const rows=previewAttendanceImport(source,employees,await existing(tx),body.skipExisting);const counts=summary(rows);check(!counts.errors,'IMPORT_VALIDATION',409);
+   const candidates=rows.flatMap(row=>row.candidate?[row.candidate]:[]),createdAt=now();
+   for(let offset=0;offset<candidates.length;offset+=200){const chunk=candidates.slice(offset,offset+200);await tx.insert(attendanceEntries).values(chunk.map(item=>({id:createHash('sha256').update(batchId+':'+item.line).digest('hex').slice(0,36),userId:item.userId,day:item.day,start:item.start,end:item.end,breakMinutes:item.breakMinutes,reason:item.reason,supplemented:1,updatedBy:user.id,updatedAt:createdAt})));await tx.insert(attendanceAudit).values(chunk.map(item=>({id:uid(),entryId:createHash('sha256').update(batchId+':'+item.line).digest('hex').slice(0,36),actorId:user.id,data:{action:'attendance-supplement',source:'excel',batchId,line:item.line,reason:item.reason,day:item.day,start:item.start,end:item.end,breakMinutes:item.breakMinutes},createdAt}))) }
+   await tx.update(attendanceImportBatches).set({inserted:candidates.length,skipped:counts.skipped}).where(eq(attendanceImportBatches.id,batchId));
+   return {inserted:candidates.length,skipped:counts.skipped,periods:[...new Set(candidates.map(item=>item.day.slice(0,7)))]};
+  }));
  }
  if(path[0]==='attendance-report'){
   check(ownerAdmin||departmentManager,'FORBIDDEN',403);check(method==='GET'&&!path[1],'NOT_FOUND',404);

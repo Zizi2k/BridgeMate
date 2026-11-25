@@ -1,4 +1,5 @@
 'use client';
+import AttendanceImport from './attendance-import';
 import AttendanceReport from './attendance-report';
 import DailyWork from './daily-work';
 import {useEffect,useState} from 'react';
@@ -39,6 +40,7 @@ export default function Attendance(){
  {message&&<p role="status">{message}</p>}
  {!data?<p>Đang tải…</p>:<>
  {data.ownerAdmin&&data.mailConfigured===false&&<p role="status">Thông báo email chưa được kích hoạt. Cần cấu hình địa chỉ gửi mail chung và khóa dịch vụ gửi mail trên máy chủ. Email nhân viên được dùng làm địa chỉ trả lời.</p>}
+ {data.ownerAdmin&&<AttendanceImport onImported={load}/>}
  {data.admin&&<AttendanceReport period={period} ownerAdmin={data.ownerAdmin}/>}
  {data.admin&&<AttendanceSupplement employees={data.employees} busy={busy} onSave={body=>run(async()=>{await api('/supplement',body);setMessage('Đã lưu chấm công bổ sung. Chọn đúng tháng trong bộ lọc để xem bản ghi.')})}/>}
  <p><strong>Tổng giờ tháng: {data.rows.reduce((sum:number,row:any)=>sum+hours(row),0).toFixed(2)} giờ</strong> · {data.rows.filter((row:any)=>!row.end).length} ca chưa có giờ ra</p>

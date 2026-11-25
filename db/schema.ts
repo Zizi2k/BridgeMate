@@ -107,3 +107,7 @@ export const attendanceNotifications=mysqlTable('attendance_notifications',{
 export const passwordRecovery=mysqlTable('password_recovery',{
  userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),status:varchar('status',{length:16}).notNull(),requestedAt:iso('requested_at').notNull(),reviewedAt:iso('reviewed_at'),reviewedBy:id('reviewed_by'),
 });
+
+export const attendanceImportBatches=mysqlTable('attendance_import_batches',{
+ id:id().primaryKey(),actorId:id('actor_id').notNull(),requestHash:varchar('request_hash',{length:64}).notNull(),inserted:int('inserted').notNull().default(0),skipped:int('skipped').notNull().default(0),createdAt:iso('created_at').notNull(),
+});
