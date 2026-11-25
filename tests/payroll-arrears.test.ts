@@ -53,3 +53,11 @@ test('payslip exports contain advances, paid salary and a separate per-period de
  const sheet=await zip.file('xl/worksheets/sheet2.xml')!.async('string');assert.ok(sheet.includes('Đã thanh toán'));assert.ok(sheet.includes('<v>2000000</v>'));
  const pdf=await PDFDocument.load(await payrollPdf(combined,'slips','2026-11',{}));assert.equal(pdf.getPageCount(),2);
 });
+
+test('legacy wages without linked accounts keep separate employee identities in consolidated exports',async()=>{
+ const {payrollIdentityKey}=await import('../lib/payroll-report.ts');
+ const one={...base,recipientId:'',departmentId:'',worker:'Nhân viên A'},two={...base,id:'other',recipientId:'',departmentId:'',worker:'Nhân viên B'};
+ const statements=consolidateArrears(settlePayroll([one,two],[]),'2026-11');
+ assert.equal(statements.length,2);assert.notEqual(payrollIdentityKey(statements[0]),payrollIdentityKey(statements[1]));
+ assert.equal(statements.find(row=>payrollIdentityKey(row)===payrollIdentityKey(two))!.worker,'Nhân viên B');
+});

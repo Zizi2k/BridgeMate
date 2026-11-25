@@ -1,4 +1,5 @@
 export type PayrollReportRow={id:string;recipientId:string;worker:string;employeeCode:string;departmentId:string;departmentName:string;period:string;hours:number;total:number;advance:number;paid:number;balance:number;isConsolidated?:boolean;fromPeriod?:string;periods?:PayrollReportRow[];commission:number;work:string};
+export const payrollIdentityKey=(row:Record<string,any>)=>JSON.stringify([row.recipientId||row.worker,row.departmentId||'']);
 export const payrollReportKey=(row:Record<string,any>)=>JSON.stringify([row.recipientId||row.worker,row.departmentId||'',row.period]);
 export function groupPayrollReport(rows:Record<string,any>[]):PayrollReportRow[]{
  const groups=new Map<string,PayrollReportRow>();

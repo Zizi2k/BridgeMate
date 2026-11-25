@@ -2,7 +2,7 @@ import {settlePayroll,consolidateArrears,allocateSalary} from '../../../lib/payr
 import {historicalAttendance,overlapsAttendance} from '../../../lib/attendance-supplement';
 import {teamWebsite,canEditTeamWebsite} from '../../../lib/team-website';
 import {payrollPdf,payrollXlsx} from '../../../lib/payroll-export';
-import {validReportYear,payrollReportKey} from '../../../lib/payroll-report';
+import {validReportYear,payrollReportKey,payrollIdentityKey} from '../../../lib/payroll-report';
 import {canManageDepartment,searchEmployee} from '../../../lib/department-policy';
 import {MAX_EVIDENCE_BYTES,imageFilenameAllowed,evidenceExpiry,evidencePreviewMime,canUploadEvidence,canReplaceEvidence,canRequestEvidenceChange} from '../../../lib/attendance-evidence';
 import {purgeAttendancePhotos} from '../../../lib/attendance-photo-cleanup';
@@ -416,7 +416,7 @@ async function handle(req:Request){
   const matching=new Set(allMonthly.filter(row=>!query||searchEmployee(row.employeeCode+' '+row.worker).includes(query)).map(row=>JSON.stringify([row.recipientId||row.worker,row.departmentId])));
   const monthly=allMonthly.filter(row=>matching.has(JSON.stringify([row.recipientId||row.worker,row.departmentId])));
   const selected=monthly.filter(row=>(year?row.period.startsWith(year+'-'):row.period===period)&&(!url.searchParams.get('reportKey')||payrollReportKey(row)===url.searchParams.get('reportKey')));
-  const consolidated=consolidateArrears(monthly,asOf).filter(row=>!url.searchParams.get('statementKey')||JSON.stringify([row.recipientId,row.departmentId])===url.searchParams.get('statementKey'));
+  const consolidated=consolidateArrears(monthly,asOf).filter(row=>!url.searchParams.get('statementKey')||payrollIdentityKey(row)===url.searchParams.get('statementKey'));
   const visible=url.searchParams.get('view')==='consolidated'?consolidated:selected;
   const totals:Record<string,{name:string;total:number;hours:number;balance:number;advance:number;paid:number}>={};
   for(const row of visible){const group=totals[row.departmentId]??={name:row.departmentName,total:0,hours:0,balance:0,advance:0,paid:0};group.advance+=row.advance;group.paid+=row.paid;group.total+=Number(row.total)||0;group.hours+=Number(row.hours)||0;group.balance+=Number(row.balance)||0}
@@ -424,7 +424,7 @@ async function handle(req:Request){
   const printTemplate={...printDefaults,...template?.data as object};
   if(path[1]==='export'){
    const format=url.searchParams.get('format'),kind=url.searchParams.get('kind');check((format==='xlsx'||format==='pdf')&&(kind==='ledger'||kind==='slips'));
-   const exportRows=kind==='slips'&&!year&&url.searchParams.get('view')!=='consolidated'?visible.map(row=>consolidated.find(statement=>statement.recipientId===row.recipientId&&statement.departmentId===row.departmentId)||row):visible;
+   const exportRows=kind==='slips'&&!year&&url.searchParams.get('view')!=='consolidated'?visible.map(row=>consolidated.find(statement=>payrollIdentityKey(statement)===payrollIdentityKey(row))||row):visible;
    const bytes=format==='xlsx'?await payrollXlsx(exportRows,kind,period,printTemplate.company):await payrollPdf(exportRows,kind,period,printTemplate);
    const filename=(kind==='ledger'?'Bang_luong_':'Phieu_luong_')+period+'.'+format;
    return new Response(Buffer.from(bytes),{headers:{'Content-Type':format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/pdf','Content-Disposition':`attachment; filename="${filename}"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
