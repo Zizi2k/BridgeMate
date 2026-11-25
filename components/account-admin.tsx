@@ -6,7 +6,7 @@ import {modules,moduleLabels,type Module,type Permission} from '../lib/module-ac
 import {AptisBank} from './aptis';
 import {PrintTemplateEditor} from './print-payroll';
 
-type Account={id:string;name:string;email:string;accountRole:'admin'|'member';suspended:boolean;permissions:Partial<Record<Module,Permission>>};
+type Account={id:string;name:string;email:string;accountRole:'admin'|'manager'|'member';employeeCode?:string;employeeName?:string;rate?:number;suspended:boolean;permissions:Partial<Record<Module,Permission>>};
 
 async function request(path:string, body?:object,method='PATCH'){
  const response=await fetch('/api/admin/accounts'+path,body?{
@@ -47,7 +47,7 @@ function ModuleVisibility({lang}:{lang:string}){
  </fieldset>;
 }
 
-export default function AccountAdmin({lang}:{lang:string}){
+export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerAdmin?:boolean}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
  const [page,setPage]=useState(1),[rows,setRows]=useState<Account[]>([]),[hasMore,setHasMore]=useState(false);
  const [loading,setLoading]=useState(true),[busy,setBusy]=useState(''),[error,setError]=useState(false);
@@ -85,15 +85,16 @@ export default function AccountAdmin({lang}:{lang:string}){
  }
  return <section>
   <div className="page-heading"><div><h1>{t('Account administration','Quản trị tài khoản')}</h1></div></div>
-  <ModuleVisibility lang={lang}/>
+  {ownerAdmin&&<ModuleVisibility lang={lang}/>}
   <PrintTemplateEditor/>
   <AptisBank lang={lang}/>
   {error&&<p role="alert">{t('Could not complete the request. Reload and try again.','Không thể thực hiện thao tác. Tải lại trang và thử lại.')}</p>}
   {loading?<p role="status">{t('Loading accounts…','Đang tải tài khoản…')}</p>:
    <div className="members-grid">{rows.map(account=><article className="member-card" key={account.id}>
     <h3>{account.name}</h3><p style={{overflowWrap:'anywhere'}}>{account.email}</p>
-    <p>{account.accountRole==='admin'?t('Administrator','Quản trị viên'):t('Member','Thành viên')} · {account.suspended?t('Suspended','Đã khóa'):t('Active','Đang hoạt động')}</p>
-    {account.accountRole!=='admin'&&modules.map(module=><div key={module}>
+    <p>{account.accountRole==='admin'?t('Administrator','Quản trị viên'):account.accountRole==='manager'?t('Manager','Người quản lý'):t('Member','Thành viên')} · {account.suspended?t('Suspended','Đã khóa'):t('Active','Đang hoạt động')}</p>
+    {ownerAdmin&&account.accountRole!=='admin'&&<EmployeeSetup account={account} saved={updated=>setRows(rows=>rows.map(row=>row.id===account.id?{...row,...updated}:row))}/>}
+    {account.accountRole!=='admin'&&modules.filter(module=>ownerAdmin||module!=='links').map(module=><div key={module}>
      <strong>{moduleLabels[module][lang==='vi'?1:0]}</strong>
      <p>{account.permissions[module]==='pending'?t('Pending','Chờ duyệt'):account.permissions[module]==='approved'?t('Approved','Đã cấp'):t('No access','Chưa cấp')}</p>
      <button type="button" className="btn" disabled={!!busy||account.permissions[module]==='approved'} onClick={()=>void changeAccess(account,module,'approved')}>{t('Approve','Duyệt')}</button>
@@ -108,4 +109,15 @@ export default function AccountAdmin({lang}:{lang:string}){
    <button className="btn" disabled={!hasMore||loading||!!busy} onClick={()=>move(page+1)}>{t('Next','Trang sau')}</button>
   </div>
  </section>;
+}
+
+function EmployeeSetup({account,saved}:{account:Account;saved:(value:Partial<Account>)=>void}){
+ const [code,setCode]=useState(account.employeeCode||''),[name,setName]=useState(account.employeeName||account.name),[rate,setRate]=useState(account.rate||0),[manager,setManager]=useState(account.accountRole==='manager'),[status,setStatus]=useState('');
+ return <form onSubmit={async e=>{e.preventDefault();try{await request('/'+account.id,{employeeCode:code,employeeName:name,rate,manager});saved({employeeCode:code,employeeName:name,rate,accountRole:manager?'manager':'member'});setStatus('Đã lưu')}catch{setStatus('Không lưu được. Kiểm tra mã nhân viên có trùng không.')}}}>
+ <h4>Thông tin nhân viên và quyền quản lý</h4>
+ <label>Mã nhân viên <input required maxLength={32} value={code} onChange={e=>setCode(e.target.value.toUpperCase())}/></label>
+ <label>Tên nhân viên <input required maxLength={120} value={name} onChange={e=>setName(e.target.value)}/></label>
+ <label>Lương mỗi giờ (đ) <input required type="number" min={0} max={1000000000} value={rate} onChange={e=>setRate(Number(e.target.value))}/></label>
+ <label><input type="checkbox" checked={manager} onChange={e=>setManager(e.target.checked)}/> Người quản lý</label><button className="btn primary">{manager?'Lưu và cấp quyền quản lý':'Lưu thông tin và quyền nhân viên'}</button><p role="status">{status}</p>
+ </form>;
 }

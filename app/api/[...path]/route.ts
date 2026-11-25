@@ -1,3 +1,5 @@
+import {localDay,shiftMinutes} from '../../../lib/attendance';
+import {attendancePayroll,closeAttendanceMonths} from '../../../lib/attendance-payroll';
 import {aptisPhotoKey,aptisPhotoSlots} from '../../../lib/aptis-photos';
 import aptisVocabulary from '../../../lib/data/aptis-vocabulary.json';
 import {aptisExample,createAptisQuestions,publicAptisQuestions,readAptisDocx,type AptisChallenge,type Vocabulary} from '../../../lib/aptis';
@@ -15,7 +17,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit} from '../../../db/schema';
 import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -33,7 +35,7 @@ async function handle(req:Request){
  const db=getDb(),url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,'').split('/').filter(Boolean),method=req.method;
  const ok=(data:any,status=200,headers:Record<string,string>={})=>Response.json({data},{status,headers:{'Cache-Control':'no-store',...headers}});
  const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('bm_session='))?.slice(11);
- const suspended=async (id:string)=>!!(await db.select({suspended:accountAccess.suspended}).from(accountAccess).where(eq(accountAccess.userId,id)).limit(1))[0]?.suspended;
+ const suspended=async (id:string)=>!!(await db.select({suspended:accountAccess.suspended,employeeCode:employeeAssignments.code,employeeName:employeeAssignments.name,rate:employeeAssignments.rate,manager:employeeAssignments.manager}).from(accountAccess).where(eq(accountAccess.userId,id)).limit(1))[0]?.suspended;
  const removed=async(id:string)=>!!(await db.select({id:removedAccounts.userId}).from(removedAccounts).where(eq(removedAccounts.userId,id)).limit(1))[0];
  let user:any=null;
  if(token){const s=await db.select().from(sessions).where(and(eq(sessions.id,token),gt(sessions.expires,Date.now()))).limit(1).then(rows=>rows[0]);if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).limit(1).then(rows=>rows[0])}
@@ -42,7 +44,7 @@ async function handle(req:Request){
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
  check(JSON.stringify(body).length<(path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
- async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);return {...publicUser(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
+ async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);const [employee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,u.id));return {...publicUser(u),accountRole:accountRole(u)==='admin'?'admin':employee?.manager?'manager':accountRole(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
  if(path[0]==='auth'){
@@ -82,7 +84,9 @@ async function handle(req:Request){
     }
    });
  }
- const admin=accountRole(user)==='admin';
+ const ownerAdmin=accountRole(user)==='admin';
+ const [assignment]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id));
+ const admin=ownerAdmin||!!assignment?.manager;
  const isAptis=path[0]==='aptis'&&path.length===2;
  if(isAptis&&path[1]==='photos'&&method==='GET'){
   const entries=await db.select({id:printSettings.id}).from(printSettings)
@@ -154,11 +158,20 @@ async function handle(req:Request){
    return ok({count:vocabulary.length,enabled:data.enabled});
   }
  }
+ if(isAptis&&path[1]==='skip'&&method==='POST'){
+  const data={id:uid(),questions:[],scores:[],passed:false,skipped:true};
+  await db.insert(aptisChallenges).values({sessionId,data}).onDuplicateKeyUpdate({set:{
+   data:sql`JSON_SET(${aptisChallenges.data}, '$.skipped', CAST('true' AS JSON))`,
+  }});
+  return ok(null);
+ }
  if(isAptis&&path[1]==='start'&&method==='POST'){
   if(!aptisEnabled)return ok(null);
+  const existing=await challengeFor() as (AptisChallenge&{skipped?:boolean})|undefined;
+  if(existing?.skipped||existing?.passed)return ok(null);
   const questions=createAptisQuestions(await getAptisVocabulary());
   const challenge:AptisChallenge={id:uid(),questions,scores:questions.map(()=>null),passed:false};
-  await db.insert(aptisChallenges).values({sessionId,data:challenge}).onDuplicateKeyUpdate({set:{data:challenge}});
+  await db.insert(aptisChallenges).values({sessionId,data:challenge}).onDuplicateKeyUpdate({set:{data:sql`CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.skipped')) = 'true' THEN ${aptisChallenges.data} ELSE CAST(${JSON.stringify(challenge)} AS JSON) END`}});
   return ok({id:challenge.id,questions:publicAptisQuestions(questions)});
  }
  if(isAptis&&path[1]==='submit'&&method==='POST'){
@@ -208,7 +221,7 @@ async function handle(req:Request){
  if(aptisEnabled){
   const [unlocked]=await db.select({sessionId:aptisChallenges.sessionId}).from(aptisChallenges).where(and(
    eq(aptisChallenges.sessionId,sessionId),
-   sql`JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.passed')) = 'true'`,
+   sql`(JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.passed')) = 'true' OR JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.skipped')) = 'true')`,
   )).limit(1);
   check(unlocked,'APTIS_REQUIRED',403);
  }
@@ -222,24 +235,25 @@ async function handle(req:Request){
   if(method==='GET')return ok(await visibility());
   if(method==='PATCH'){
    check(admin,'FORBIDDEN',403);
+   check(ownerAdmin||body.module!=='links','FORBIDDEN',403);
    check((body.module==='links'||body.module==='payroll')&&typeof body.hidden==='boolean');
    const id='visibility-'+body.module,data=body.hidden;
    await db.insert(printSettings).values({id,data}).onDuplicateKeyUpdate({set:{data}});
    return ok(await visibility());
   }
  }
- const approved=async (module:Module)=> admin||!user.demo&&!(await hidden(module))&&(await db.select({status:moduleApprovals.status})
+ const approved=async (module:Module)=> (module==='links'?ownerAdmin:admin)||!user.demo&&!(await hidden(module))&&(await db.select({status:moduleApprovals.status})
   .from(moduleApprovals).where(and(eq(moduleApprovals.userId,user.id),eq(moduleApprovals.module,module))).limit(1))[0]?.status==='approved';
  if(path[0]==='access'&&path.length===1){
   if(method==='GET'){
    const rows=await db.select({module:moduleApprovals.module,status:moduleApprovals.status}).from(moduleApprovals).where(eq(moduleApprovals.userId,user.id));
-   return ok({admin,permissions:Object.fromEntries(rows.map(row=>[row.module,row.status]))});
+   return ok({admin:ownerAdmin,manager:admin&&!ownerAdmin,permissions:Object.fromEntries(rows.map(row=>[row.module,row.status]))});
   }
   if(method==='POST'){
    check(!user.demo,'FORBIDDEN',403);
    check(isModule(body.module));
    const module=body.module;
-   check(admin||!await hidden(module),'MODULE_HIDDEN',403);
+   check((module==='links'?ownerAdmin:admin)||!await hidden(module),'MODULE_HIDDEN',403);
    await db.insert(moduleApprovals).values({userId:user.id,module,status:'pending'}).onDuplicateKeyUpdate({
     set:{status:sql`CASE WHEN ${moduleApprovals.status} = 'approved' THEN 'approved' ELSE 'pending' END`},
    });
@@ -295,19 +309,30 @@ async function handle(req:Request){
   if(path[1]==='accounts'&&path.length===2&&method==='GET'){
    const page=Number(url.searchParams.get('page')||1);
    check(Number.isSafeInteger(page)&&page>=1&&page<=10000);
-   const rows=await db.select({id:users.id,name:users.name,email:users.email,demo:users.demo,suspended:accountAccess.suspended})
-    .from(users).leftJoin(accountAccess,eq(users.id,accountAccess.userId))
+   const rows=await db.select({id:users.id,name:users.name,email:users.email,demo:users.demo,suspended:accountAccess.suspended,employeeCode:employeeAssignments.code,employeeName:employeeAssignments.name,rate:employeeAssignments.rate,manager:employeeAssignments.manager})
+    .from(users).leftJoin(employeeAssignments,eq(users.id,employeeAssignments.userId)).leftJoin(accountAccess,eq(users.id,accountAccess.userId))
     .leftJoin(removedAccounts,eq(users.id,removedAccounts.userId))
     .where(and(eq(users.demo,0),isNull(removedAccounts.userId))).orderBy(users.email).limit(26).offset((page-1)*25);
    const visible=rows.slice(0,25);
    const permissions=visible.length?await db.select().from(moduleApprovals).where(inArray(moduleApprovals.userId,visible.map(row=>row.id))):[];
-   return ok({rows:visible.map(row=>({...publicUser(row),suspended:!!row.suspended,permissions:Object.fromEntries(
+   return ok({rows:visible.map(row=>({...publicUser(row),accountRole:accountRole(row)==='admin'?'admin':row.manager?'manager':'member',employeeCode:row.employeeCode,employeeName:row.employeeName,rate:row.rate,suspended:!!row.suspended,permissions:Object.fromEntries(
     permissions.filter(item=>item.userId===row.id).map(item=>[item.module,item.status]))})),hasMore:rows.length>25});
   }
   if(path[1]==='accounts'&&path.length===3&&(method==='PATCH'||method==='DELETE')){
    const [target]=await db.select({id:users.id,demo:users.demo}).from(users).where(eq(users.id,path[2])).limit(1);
    check(target&&!target.demo,'NOT_FOUND',404);
    check(accountRole(target)!=='admin','FORBIDDEN',403);
+   const [targetEmployee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,target.id));
+   check(ownerAdmin||!targetEmployee?.manager,'FORBIDDEN',403);
+   if('employeeCode' in body){
+    check(ownerAdmin,'FORBIDDEN',403);
+    const code=normalizeEmployeeCode(str(body.employeeCode,32)),name=str(body.employeeName,120);
+    check(employeeCodePattern.test(code)&&Number.isSafeInteger(body.rate)&&body.rate>=0&&body.rate<=1e9&&typeof body.manager==='boolean');
+    const data={code,name,rate:body.rate,manager:body.manager?1:0};
+    await db.insert(employeeAssignments).values({userId:target.id,...data}).onDuplicateKeyUpdate({set:data});
+    return ok(null);
+   }
+   if('module' in body)check(ownerAdmin||body.module!=='links','FORBIDDEN',403);
    if(method==='DELETE'){
     await db.transaction(async tx=>{
      await tx.insert(removedAccounts).values({userId:target.id}).onDuplicateKeyUpdate({set:{userId:target.id}});
@@ -334,6 +359,7 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
  if(path[0]==='my-payslips'&&path.length===1&&method==='POST'){
+  await closeAttendanceMonths();
   check(!user.demo,'FORBIDDEN',403);
   const employeeCode=normalizeEmployeeCode(typeof body.employeeCode==='string'?body.employeeCode:'');
   const period=typeof body.period==='string'?body.period:'';
@@ -355,6 +381,55 @@ async function handle(req:Request){
   const slips=[...byTeam.values()].map(summarizePayslip).filter(slip=>slip!==null);
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
   return ok({slips,template:{...printDefaults,...template?.data as object}});
+ }
+ if(path[0]==='attendance'){
+  check(!user.demo,'FORBIDDEN',403);
+  const period=url.searchParams.get('period')||localDay().slice(0,7);
+  check(payPeriodPattern.test(period));
+  if(method==='GET'){
+   await closeAttendanceMonths();
+   const rows=await db.select().from(attendanceEntries).where(admin?undefined:eq(attendanceEntries.userId,user.id));
+   const employees=await db.select().from(employeeAssignments).where(admin?undefined:eq(employeeAssignments.userId,user.id));
+   return ok({rows:rows.filter(row=>row.day.startsWith(period)),employees,admin,ownerAdmin});
+  }
+  if(path[1]==='preview'||path[1]==='sync'){
+   check(admin,'FORBIDDEN',403);check(method==='POST');
+   return ok(await attendancePayroll(period,path[1]==='sync'));
+  }
+  if(path[1]==='clock'&&method==='POST'){
+   check(assignment&&normalizeEmployeeCode(str(body.code,32))===assignment.code&&str(body.name,120).normalize('NFC')===assignment.name.normalize('NFC'),'EMPLOYEE_MISMATCH',403);
+   check(body.action==='in'||body.action==='out');
+   return db.transaction(async tx=>{
+    await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id)).for('update');
+    const rows=await tx.select().from(attendanceEntries).where(eq(attendanceEntries.userId,user.id)).for('update');
+    const opened=rows.find(row=>!row.end),time=now();
+    if(body.action==='in'){
+     check(!opened&&!rows.some(row=>row.day===localDay()),'ALREADY_CLOCKED',409);
+     await tx.insert(attendanceEntries).values({id:uid(),userId:user.id,day:localDay(),start:time,reason:'',updatedBy:user.id,updatedAt:time});
+    }else{
+     check(opened,'NO_OPEN_SHIFT',409);try{shiftMinutes(opened.start,time)}catch{throw new ApiError('INVALID_SHIFT')}
+     await tx.update(attendanceEntries).set({end:time,updatedBy:user.id,updatedAt:time}).where(eq(attendanceEntries.id,opened.id));
+    }
+    return ok(null);
+   });
+  }
+  if(path[1]&&method==='PATCH')return db.transaction(async tx=>{
+   const [row]=await tx.select().from(attendanceEntries).where(eq(attendanceEntries.id,path[1])).for('update');
+   check(row,'NOT_FOUND',404);check(admin||row.userId===user.id&&!!row.editable,'FORBIDDEN',403);
+   if(typeof body.editable==='boolean'){
+    check(admin,'FORBIDDEN',403);
+    await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{action:'edit-permission',editable:body.editable},createdAt:now()});
+    await tx.update(attendanceEntries).set({editable:body.editable?1:0}).where(eq(attendanceEntries.id,row.id));
+   }else{
+    const start=str(body.start,32),end=str(body.end,32),reason=str(body.reason,1000);
+    try{shiftMinutes(start,end)}catch{throw new ApiError('INVALID_SHIFT')}check(localDay(new Date(start))===row.day);
+    const data={start:new Date(start).toISOString(),end:new Date(end).toISOString(),reason,editable:0,updatedBy:user.id,updatedAt:now()};
+    await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{before:row,after:data},createdAt:now()});
+    await tx.update(attendanceEntries).set(data).where(eq(attendanceEntries.id,row.id));
+   }
+   return ok(null);
+  });
+  throw new ApiError('NOT_FOUND',404);
  }
  if(path[0]==='payroll'){
   const [,scope,entryId,...extra]=path;
