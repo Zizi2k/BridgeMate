@@ -35,7 +35,7 @@ async function handle(req:Request){
  const db=getDb(),url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,'').split('/').filter(Boolean),method=req.method;
  const ok=(data:any,status=200,headers:Record<string,string>={})=>Response.json({data},{status,headers:{'Cache-Control':'no-store',...headers}});
  const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('bm_session='))?.slice(11);
- const suspended=async (id:string)=>!!(await db.select({suspended:accountAccess.suspended,employeeCode:employeeAssignments.code,employeeName:employeeAssignments.name,rate:employeeAssignments.rate,manager:employeeAssignments.manager}).from(accountAccess).where(eq(accountAccess.userId,id)).limit(1))[0]?.suspended;
+ const suspended=async (id:string)=>!!(await db.select({suspended:accountAccess.suspended}).from(accountAccess).where(eq(accountAccess.userId,id)).limit(1))[0]?.suspended;
  const removed=async(id:string)=>!!(await db.select({id:removedAccounts.userId}).from(removedAccounts).where(eq(removedAccounts.userId,id)).limit(1))[0];
  let user:any=null;
  if(token){const s=await db.select().from(sessions).where(and(eq(sessions.id,token),gt(sessions.expires,Date.now()))).limit(1).then(rows=>rows[0]);if(s)user=await db.select().from(users).where(eq(users.id,s.userId)).limit(1).then(rows=>rows[0])}
