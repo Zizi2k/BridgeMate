@@ -4,7 +4,7 @@ import {payrollQr} from '../lib/payroll-qr';
 import {useEffect,useState,type FormEvent} from 'react';
 import {printDefaults,type PrintTemplate} from '../lib/module-access';
 
-type Slip={id:string;worker:string;work:string;employeeCode?:string;period:string;total:number;commission:number;advance:number;balance:number};
+type Slip={paid?:number;isConsolidated?:boolean;fromPeriod?:string;periods?:{period:string;total:number;advance:number;paid:number;balance:number}[];id:string;worker:string;work:string;employeeCode?:string;period:string;total:number;commission:number;advance:number;balance:number};
 const keys=Object.keys(printDefaults) as Array<keyof PrintTemplate>;
 const headings:Partial<Record<keyof PrintTemplate,string>>={company:'Công ty',address:'Địa chỉ',salaryTitle:'Tiêu đề phiếu lương',advanceTitle:'Tiêu đề phiếu tạm ứng'};
 
@@ -133,7 +133,7 @@ export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{e
   </div>
   {template&&<article className="pay-slip-page">
    <header><strong>{template.company}</strong><p>{template.address}</p></header>
-   <h2>{advance?template.advanceTitle:template.salaryTitle}</h2>
+   <h2>{entry.isConsolidated?'PHIẾU LƯƠNG CỘNG GỘP':advance?template.advanceTitle:template.salaryTitle}</h2>
    <p className="pay-slip-center">Ngày lập {date.split('-').reverse().join('/')} · Kỳ lương {entry.period.split('-').reverse().join('/')}</p>
    <table><thead><tr><th>STT</th><th>Thông tin</th><th>Giá trị</th></tr></thead><tbody>
     <tr><td>1</td><th scope="row">{template.code}</th><td>{code||'—'}</td></tr>
@@ -149,8 +149,10 @@ export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{e
         {!advance&&<><tr><td>9</td><th scope="row">{template.insurance}</th><td>{money(adjustments.insurance)}</td></tr>
      <tr><td>10</td><th scope="row">{template.tax}</th><td>{money(adjustments.tax)}</td></tr></>}
     <tr><td>{advance?5:11}</td><th scope="row">{template.advance}</th><td>{money(entry.advance)}</td></tr>
-    {!advance&&<tr><td>12</td><th scope="row">{template.balance}</th><td>{money(remaining)}</td></tr>}
+    {!advance&&<tr><td>12</td><th scope="row">Lương đã thanh toán</th><td>{money(entry.paid||0)}</td></tr>}
+    {!advance&&<tr><td>13</td><th scope="row">{template.balance}</th><td>{money(remaining)}</td></tr>}
    </tbody></table>
+   {entry.isConsolidated&&entry.periods&&<><h3>Chi tiết công nợ từng kỳ</h3><table><thead><tr><th>Kỳ lương</th><th>Tổng lương</th><th>Đã ứng</th><th>Đã trả</th><th>Còn phải trả</th></tr></thead><tbody>{entry.periods.map(row=><tr key={row.period}><td>{row.period}</td><td>{money(row.total)}</td><td>{money(row.advance)}</td><td>{money(row.paid)}</td><td>{money(row.balance)}</td></tr>)}</tbody></table><p>Còn phải trả = tổng lương − các khoản đã ứng − lương đã thanh toán.</p></>}
    {payload&&<section className="pay-slip-transfer" aria-label="Thông tin chuyển khoản">
     <div><strong>Thông tin chuyển khoản</strong>
      <p>Ngân hàng: {selectedBank?.name||'BIN '+bin}</p>

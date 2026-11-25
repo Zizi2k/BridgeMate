@@ -1,3 +1,4 @@
+import {settlePayroll,consolidateArrears,allocateSalary} from '../../../lib/payroll-arrears';
 import {historicalAttendance,overlapsAttendance} from '../../../lib/attendance-supplement';
 import {teamWebsite,canEditTeamWebsite} from '../../../lib/team-website';
 import {payrollPdf,payrollXlsx} from '../../../lib/payroll-export';
@@ -24,7 +25,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches} from '../../../db/schema';
 import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -334,36 +335,101 @@ async function handle(req:Request){
   if(method==='PATCH'&&path[1]){const name=str(body.name,120);check(typeof body.active==='boolean');await db.update(departments).set({name,active:body.active?1:0}).where(eq(departments.id,path[1]));return ok(null)}
   throw new ApiError('NOT_FOUND',404);
  }
+ if(path[0]==='salary-payments'){
+  check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+  let recipientId=method==='GET'?url.searchParams.get('employeeId'):body.recipientId;
+  let requestedDepartment=method==='GET'?url.searchParams.get('departmentId'):body.departmentId;
+  let batchRows:any[]=[];
+  if(path[1]&&path[2]==='void'&&method==='POST'){
+   batchRows=await db.select().from(salaryPayments).where(eq(salaryPayments.batchId,path[1]));check(batchRows.length,'NOT_FOUND',404);
+   recipientId=batchRows[0].recipientId;requestedDepartment=batchRows[0].departmentId;
+  }
+  const employeeId=str(recipientId,36),departmentId=str(requestedDepartment,36);
+  check(await managesEmployee(employeeId),'FORBIDDEN',403);
+  check(ownerAdmin||departmentId===currentDepartment.departmentId,'FORBIDDEN',403);
+  if(method==='GET'&&!path[1]){
+   const period=url.searchParams.get('period')||localDay().slice(0,7);check(payPeriodPattern.test(period));
+   return ok(await db.select().from(salaryPayments).where(and(eq(salaryPayments.recipientId,employeeId),eq(salaryPayments.departmentId,departmentId),sql`${salaryPayments.period} <= ${period}`)).orderBy(desc(salaryPayments.createdAt)));
+  }
+  if(path[2]==='void'&&method==='POST'){
+   const reason=str(body.reason,1000);
+   await db.transaction(async tx=>{
+    await tx.select().from(salaryPaymentBatches).where(eq(salaryPaymentBatches.id,path[1])).for('update');
+    await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,employeeId)).for('update');
+    const entries=await tx.select().from(salaryPayments).where(eq(salaryPayments.batchId,path[1])).for('update');
+    check(entries.every(row=>row.recipientId===employeeId&&row.departmentId===departmentId),'FORBIDDEN',403);
+    await tx.update(salaryPayments).set({voided:1,voidReason:reason,voidedBy:user.id,voidedAt:now()}).where(and(eq(salaryPayments.batchId,path[1]),eq(salaryPayments.voided,0)));
+   });return ok(null);
+  }
+  check(method==='POST'&&!path[1],'NOT_FOUND',404);
+  const period=str(body.period,7),batchId=str(body.batchId,36),kind=body.kind,amount=body.amount,paidAt=str(body.paidAt,10),note=typeof body.note==='string'?body.note.trim():'';
+  check(payPeriodPattern.test(period)&&/^[0-9a-f-]{36}$/i.test(batchId)&&['salary','advance'].includes(kind)&&Number.isSafeInteger(amount)&&amount>0&&amount<=1e12&&validDay(paidAt)&&paidAt<=localDay()&&note.length<=1000);
+  const oldestFirst=body.oldestFirst===true;
+  check(kind!=='advance'||!oldestFirst);
+  const requestHash=createHash('sha256').update(JSON.stringify({employeeId,departmentId,period,kind,amount,paidAt,note,oldestFirst})).digest('hex');
+  return db.transaction(async tx=>{
+   await tx.insert(salaryPaymentBatches).values({id:batchId,requestHash,recipientId:employeeId,departmentId,createdBy:user.id,createdAt:now()}).onDuplicateKeyUpdate({set:{id:batchId}});
+   const [batch]=await tx.select().from(salaryPaymentBatches).where(eq(salaryPaymentBatches.id,batchId)).for('update');
+   check(batch.requestHash===requestHash&&batch.recipientId===employeeId&&batch.departmentId===departmentId,'PAYMENT_RETRY_CHANGED',409);
+   const [employee]=await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,employeeId)).for('update');check(employee,'NOT_FOUND',404);
+   const previous=await tx.select().from(salaryPayments).where(eq(salaryPayments.batchId,batchId)).for('update');
+   if(previous.length){check(previous.every(row=>row.requestHash===requestHash),'PAYMENT_RETRY_CHANGED',409);check(previous.every(row=>!row.voided),'PAYMENT_VOIDED',409);return ok({batchId,reused:true})}
+   const source=await tx.select().from(payrollEntries).where(and(like(payrollEntries.scopeId,'team:%'),sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId')) = ${employeeId}`,sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) <= ${period}`)).for('update');
+   const currentEmployeeDepartment=await employeeDepartment(employeeId);
+   const records=source.map(row=>({...row.data as Record<string,any>,id:row.id}) as Record<string,any>).filter(row=>(row.departmentId||currentEmployeeDepartment)===departmentId).map(row=>({...row,departmentId}) as Record<string,any>);
+   const payments=await tx.select().from(salaryPayments).where(and(eq(salaryPayments.recipientId,employeeId),eq(salaryPayments.departmentId,departmentId),sql`${salaryPayments.period} <= ${period}`));
+   const monthly=settlePayroll(records,payments);
+   let allocations:{period:string;amount:number}[];
+   if(kind==='salary'){try{allocations=allocateSalary(monthly,amount,period,oldestFirst)}catch{throw new ApiError('PAYMENT_EXCEEDS_BALANCE',409)}}
+   else{check(records.some(row=>row.period===period),'PAYROLL_NOT_READY',409);allocations=[{period,amount}]}
+   const [department]=await tx.select().from(departments).where(eq(departments.id,departmentId));check(department,'NOT_FOUND',404);
+   const createdAt=now();
+   for(const allocation of allocations){const id=createHash('sha256').update(batchId+':'+allocation.period).digest('hex').slice(0,36);await tx.insert(salaryPayments).values({id,batchId,requestHash,recipientId:employeeId,departmentId,period:allocation.period,kind,amount:allocation.amount,paidAt,note,metadata:{worker:employee.name,employeeCode:employee.code,departmentName:department.name},createdBy:user.id,createdAt})}
+   return ok({batchId,allocations},201);
+  });
+ }
  if(path[0]==='department-payroll'&&method==='GET'){
   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
   const year=url.searchParams.get('year'),period=year||url.searchParams.get('period')||localDay().slice(0,7);check(year?validReportYear(year):payPeriodPattern.test(period));
+  const asOf=year?year+'-12':period;
   const departmentId=ownerAdmin?(url.searchParams.get('departmentId')||''):currentDepartment.departmentId;
   const memberships=await db.select({userId:accountDepartments.userId,departmentId:accountDepartments.departmentId,departmentName:departments.name}).from(accountDepartments).innerJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(and(eq(accountDepartments.status,'approved'),!ownerAdmin?eq(accountDepartments.departmentId,departmentId):undefined));
   const departmentNames=await db.select().from(departments);
   const ids=memberships.map(row=>row.userId);
   const query=searchEmployee((url.searchParams.get('q')||'').slice(0,120));
-  const rows=await db.select().from(payrollEntries).where(and(year?like(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period'))`,year+'-%'):sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`,like(payrollEntries.scopeId,'team:%'),ownerAdmin?undefined:ids.length?inArray(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId'))`,ids):sql`false`));
-  const visible:Array<Record<string,any>>=rows.flatMap(row=>{
+  const rows=await db.select().from(payrollEntries).where(and(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) <= ${asOf}`,like(payrollEntries.scopeId,'team:%'),ownerAdmin?undefined:ids.length?inArray(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId'))`,ids):sql`false`));
+  const scoped:Array<Record<string,any>>=rows.flatMap(row=>{
    const data=row.data as Record<string,any>,membership=memberships.find(member=>member.userId===data.recipientId);
    if(!ownerAdmin&&(!membership||data.departmentId&&data.departmentId!==departmentId))return [];
    const payrollDepartmentId=data.departmentId||membership?.departmentId||'';
    if(ownerAdmin&&departmentId&&payrollDepartmentId!==departmentId)return [];
-   if(url.searchParams.get('reportKey')&&payrollReportKey({...data,departmentId:payrollDepartmentId})!==url.searchParams.get('reportKey'))return [];
    if(url.searchParams.get('employeeId')&&data.recipientId!==url.searchParams.get('employeeId'))return [];
-   if(query&&!searchEmployee((data.employeeCode||'')+' '+(data.worker||'')).includes(query))return [];
    return [{...data,id:row.id,departmentId:payrollDepartmentId,departmentName:departmentNames.find(department=>department.id===payrollDepartmentId)?.name||'Chưa phân phòng ban'}];
   });
-  const totals:Record<string,{name:string;total:number;hours:number;balance:number}>={};
-  for(const row of visible){const group=totals[row.departmentId]??={name:row.departmentName,total:0,hours:0,balance:0};group.total+=Number(row.total)||0;group.hours+=Number(row.hours)||0;group.balance+=Number(row.balance)||0}
+  const payments=await db.select().from(salaryPayments).where(and(sql`${salaryPayments.period} <= ${asOf}`,ownerAdmin?undefined:eq(salaryPayments.departmentId,departmentId)));
+  const authorizedPayments=payments.filter(payment=>{
+   if(!ownerAdmin&&!memberships.some(member=>member.userId===payment.recipientId&&member.departmentId===payment.departmentId))return false;
+   if(departmentId&&payment.departmentId!==departmentId)return false;
+   return !url.searchParams.get('employeeId')||payment.recipientId===url.searchParams.get('employeeId');
+  });
+  const allMonthly=settlePayroll(scoped,authorizedPayments);
+  const matching=new Set(allMonthly.filter(row=>!query||searchEmployee(row.employeeCode+' '+row.worker).includes(query)).map(row=>JSON.stringify([row.recipientId||row.worker,row.departmentId])));
+  const monthly=allMonthly.filter(row=>matching.has(JSON.stringify([row.recipientId||row.worker,row.departmentId])));
+  const selected=monthly.filter(row=>(year?row.period.startsWith(year+'-'):row.period===period)&&(!url.searchParams.get('reportKey')||payrollReportKey(row)===url.searchParams.get('reportKey')));
+  const consolidated=consolidateArrears(monthly,asOf).filter(row=>!url.searchParams.get('statementKey')||JSON.stringify([row.recipientId,row.departmentId])===url.searchParams.get('statementKey'));
+  const visible=url.searchParams.get('view')==='consolidated'?consolidated:selected;
+  const totals:Record<string,{name:string;total:number;hours:number;balance:number;advance:number;paid:number}>={};
+  for(const row of visible){const group=totals[row.departmentId]??={name:row.departmentName,total:0,hours:0,balance:0,advance:0,paid:0};group.advance+=row.advance;group.paid+=row.paid;group.total+=Number(row.total)||0;group.hours+=Number(row.hours)||0;group.balance+=Number(row.balance)||0}
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll'));
   const printTemplate={...printDefaults,...template?.data as object};
   if(path[1]==='export'){
    const format=url.searchParams.get('format'),kind=url.searchParams.get('kind');check((format==='xlsx'||format==='pdf')&&(kind==='ledger'||kind==='slips'));
-   const bytes=format==='xlsx'?await payrollXlsx(visible,kind,period,printTemplate.company):await payrollPdf(visible,kind,period,printTemplate);
+   const exportRows=kind==='slips'&&!year&&url.searchParams.get('view')!=='consolidated'?visible.map(row=>consolidated.find(statement=>statement.recipientId===row.recipientId&&statement.departmentId===row.departmentId)||row):visible;
+   const bytes=format==='xlsx'?await payrollXlsx(exportRows,kind,period,printTemplate.company):await payrollPdf(exportRows,kind,period,printTemplate);
    const filename=(kind==='ledger'?'Bang_luong_':'Phieu_luong_')+period+'.'+format;
    return new Response(Buffer.from(bytes),{headers:{'Content-Type':format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/pdf','Content-Disposition':`attachment; filename="${filename}"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
   }
-  return ok({rows:visible,totals:Object.values(totals),template:printTemplate});
+  return ok({rows:visible,consolidated,asOf,totals:Object.values(totals),template:printTemplate});
  }
  if(path[0]==='admin'){
   check(admin,'FORBIDDEN',403);
@@ -440,17 +506,15 @@ async function handle(req:Request){
    .from(payrollEntries).where(and(
     like(payrollEntries.scopeId,'team:%'),
     sql`BINARY JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId')) = ${user.id}`,
-    sql`BINARY JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.employeeCode')) = ${employeeCode}`,
-    sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`,
+    sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) <= ${period}`,
    ));
-  type Entry=NonNullable<ReturnType<typeof payrollData>> & {id:string};
-  const byTeam=new Map<string,Entry[]>();
-  for(const row of rows){
-   const entries=byTeam.get(row.scopeId)??[];
-   entries.push({...row.data as Entry,id:row.id});
-   byTeam.set(row.scopeId,entries);
-  }
-  const slips=[...byTeam.values()].map(summarizePayslip).filter(slip=>slip!==null);
+  check(assignment?.code===employeeCode||rows.some(row=>(row.data as any).employeeCode===employeeCode),'EMPLOYEE_MISMATCH',403);
+  const currentDept=await employeeDepartment(user.id)||'';
+  const ownRows=rows.map(row=>({...row.data as Record<string,any>,id:row.id,departmentId:(row.data as any).departmentId||currentDept}));
+  const payments=await db.select().from(salaryPayments).where(and(eq(salaryPayments.recipientId,user.id),sql`${salaryPayments.period} <= ${period}`));
+  const monthly=settlePayroll(ownRows,payments),combined=consolidateArrears(monthly,period);
+  const slips=monthly.filter(row=>row.period===period).map(row=>combined.find(statement=>statement.departmentId===row.departmentId)||row);
+  for(const statement of combined)if(!slips.some(row=>row.departmentId===statement.departmentId))slips.push(statement);
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
   return ok({slips,template:{...printDefaults,...template?.data as object}});
  }

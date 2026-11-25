@@ -1,6 +1,7 @@
 'use client';
 import {useEffect,useState} from 'react';
 import PrintPayroll from './print-payroll';
+import SalarySettlement from './salary-settlement';
 import {groupPayrollReport,payrollReportKey,type PayrollReportRow} from '../lib/payroll-report';
 export type Department={id:string;name:string;active:number};
 export async function departmentRequest(path:string,method='GET',body?:object){
@@ -28,16 +29,17 @@ export function DepartmentAdmin({departments,onChanged}:{departments:Department[
 }
 export default function DepartmentPayroll({ownerAdmin}:{ownerAdmin:boolean}){
  const [period,setPeriod]=useState(()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit'}).format(new Date())),[q,setQ]=useState(''),[departmentId,setDepartmentId]=useState(''),[departments,setDepartments]=useState<Department[]>([]);
- const [range,setRange]=useState('month'),[year,setYear]=useState(()=>String(new Date().getFullYear())),[kind,setKind]=useState<'ledger'|'slips'>('ledger'),[exporting,setExporting]=useState(false),[revision,setRevision]=useState(0);
+ const [range,setRange]=useState('month'),[year,setYear]=useState(()=>String(new Date().getFullYear())),[kind,setKind]=useState<'ledger'|'slips'|'arrears'>('ledger'),[exporting,setExporting]=useState(false),[revision,setRevision]=useState(0);
+ const [paymentTarget,setPaymentTarget]=useState<PayrollReportRow|null>(null),[notice,setNotice]=useState('');
  const [result,setResult]=useState<any>(null),[error,setError]=useState(''),[slip,setSlip]=useState<any>(null);
  function filters(){return new URLSearchParams({...range==='year'?{year}:{period},q,departmentId})}
  useEffect(()=>{if(ownerAdmin)departmentRequest('departments').then(setDepartments).catch(e=>setError(e.message))},[ownerAdmin]);
  useEffect(()=>{let active=true;setResult(null);setError('');const timer=setTimeout(()=>{departmentRequest('department-payroll?'+filters()).then(data=>{if(active)setResult(data)}).catch(e=>{if(active)setError(e.message)})},250);return()=>{active=false;clearTimeout(timer)}},[period,q,departmentId,range,year,revision]);
- async function download(format:'xlsx'|'pdf',selectedKind:'ledger'|'slips'=kind,row?:PayrollReportRow){
+ async function download(format:'xlsx'|'pdf',selectedKind:'ledger'|'slips'|'arrears'=kind,row?:PayrollReportRow){
   setExporting(true);setError('');
   try{
-   const params=filters();params.set('format',format);params.set('kind',selectedKind);
-   if(row){params.delete('year');params.set('period',row.period);params.set('reportKey',payrollReportKey(row));params.delete('q')}
+   const params=filters();params.set('format',format);params.set('kind',selectedKind==='arrears'?'slips':selectedKind);if(selectedKind==='arrears')params.set('view','consolidated');
+   if(row){params.delete('year');params.set('period',row.period);if(row.isConsolidated){params.set('view','consolidated');params.set('statementKey',JSON.stringify([row.recipientId,row.departmentId]))}else params.set('reportKey',payrollReportKey(row));params.delete('q')}
    const res=await fetch('/api/department-payroll/export?'+params,{cache:'no-store'});
    if(!res.ok)throw Error('Không xuất được file. Kiểm tra quyền phòng ban và bộ lọc thời gian rồi thử lại.');
    const blob=await res.blob(),url=URL.createObjectURL(blob),link=document.createElement('a');
@@ -45,6 +47,7 @@ export default function DepartmentPayroll({ownerAdmin}:{ownerAdmin:boolean}){
   }catch(e:any){setError(e.message)}finally{setExporting(false)}
  }
  const groups=groupPayrollReport(result?.rows||[]);
+ const autoSlip=(row:PayrollReportRow)=>row.period===result?.asOf?(result.consolidated?.find((statement:PayrollReportRow)=>statement.recipientId===row.recipientId&&statement.departmentId===row.departmentId)||row):row;
  if(slip&&result)return <PrintPayroll entry={slip} advance={false} readOnlyTemplate={result.template} onClose={()=>setSlip(null)}/>;
  return <section><h1>Bảng lương nhân viên {ownerAdmin?'theo phòng ban':'phòng ban'}</h1><div className="board-toolbar" style={{flexWrap:'wrap'}}>
  <label>Thời gian <select value={range} onChange={e=>setRange(e.target.value)}><option value="month">Theo tháng</option><option value="year">Cả năm</option></select></label>
@@ -52,11 +55,16 @@ export default function DepartmentPayroll({ownerAdmin}:{ownerAdmin:boolean}){
  {ownerAdmin&&<label>Phòng ban <select value={departmentId} onChange={e=>setDepartmentId(e.target.value)}><option value="">Tất cả phòng ban</option>{departments.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label>}
  <label>Tìm mã hoặc tên nhân viên <input type="search" maxLength={120} value={q} onChange={e=>setQ(e.target.value)} placeholder="Mã NV hoặc họ tên"/></label>
  <button className="btn" disabled={exporting} onClick={()=>{setQ('');setRevision(value=>value+1)}}>Xem toàn bộ nhân viên phòng ban</button></div>
- <div className="board-toolbar" style={{flexWrap:'wrap'}}><label>Nội dung xuất <select value={kind} onChange={e=>setKind(e.target.value as 'ledger'|'slips')}><option value="ledger">Bảng lương</option><option value="slips">Toàn bộ phiếu lương</option></select></label>
+ <div className="board-toolbar" style={{flexWrap:'wrap'}}><label>Nội dung xuất <select value={kind} onChange={e=>setKind(e.target.value as 'ledger'|'slips'|'arrears')}><option value="ledger">Bảng lương</option><option value="slips">Toàn bộ phiếu lương</option><option value="arrears">Phiếu cộng gộp nợ quá 2 tháng</option></select></label>
  <button className="btn" disabled={exporting||!groups.length} onClick={()=>void download('xlsx')}>{exporting?'Đang xuất…':'Xuất XLSX'}</button><button className="btn" disabled={exporting||!groups.length} onClick={()=>void download('pdf')}>Xuất PDF</button></div><p>File xuất áp dụng bộ lọc phòng ban, nhân viên và thời gian đang chọn. Mỗi phiếu lương được tách riêng theo nhân viên và tháng.</p>
+ {notice&&<p role="status">{notice}</p>}{paymentTarget&&<SalarySettlement key={payrollReportKey(paymentTarget)+String(paymentTarget.isConsolidated)} row={paymentTarget} onClose={()=>setPaymentTarget(null)} onSaved={()=>{setPaymentTarget(null);setNotice('Đã cập nhật ứng / thanh toán. Công nợ đã được tính lại.');setRevision(value=>value+1)}}/>}
+ <p>Còn phải trả = tổng lương − tiền đã ứng − lương đã thanh toán. Hãy ghi nhận các khoản đã trả trước đây để công nợ đúng; khoản ứng đã có trong bảng lương không nhập lại.</p>
  {error&&<p role="alert">{error}</p>}{!error&&!result&&<p>Đang tải bảng lương…</p>}
- {result&&<><p><strong>Tổng lương các phòng ban đang xem: {result.totals.reduce((sum:number,row:any)=>sum+row.total,0).toLocaleString('vi-VN')} đ</strong></p><div className="members-grid">{result.totals.map((row:any)=><article key={row.name} className="review-card"><h2>{row.name}</h2><p>Tổng giờ: {row.hours.toFixed(2)}</p><p>Tổng lương: {row.total.toLocaleString('vi-VN')} đ</p><p>Còn lại: {row.balance.toLocaleString('vi-VN')} đ</p></article>)}</div>
- <div style={{overflowX:'auto'}}><table style={{width:'100%',minWidth:850,textAlign:'left'}}><thead><tr>{['Kỳ lương','Phòng ban','Mã NV','Nhân viên','Tổng giờ','Tổng lương','Tiền ứng','Còn lại','Phiếu lương'].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{groups.map(row=><tr key={payrollReportKey(row)}><td>{row.period}</td><td>{row.departmentName}</td><td>{row.employeeCode}</td><td>{row.worker}</td><td>{row.hours.toFixed(2)}</td><td>{row.total.toLocaleString('vi-VN')}</td><td>{row.advance.toLocaleString('vi-VN')}</td><td>{row.balance.toLocaleString('vi-VN')}</td><td><button className="btn" onClick={()=>setSlip(row)}>Xem phiếu lương</button><button className="btn" disabled={exporting} onClick={()=>void download('xlsx','slips',row)}>Phiếu XLSX</button><button className="btn" disabled={exporting} onClick={()=>void download('pdf','slips',row)}>Phiếu PDF</button></td></tr>)}</tbody></table></div>
+ {result&&<><section className="review-card"><h2>Tổng cộng gộp công nợ</h2><p>Tính đến kỳ {result.asOf}: {result.consolidated.reduce((sum:number,row:any)=>sum+row.balance,0).toLocaleString('vi-VN')} đ còn phải trả khi có kỳ nợ quá 2 tháng.</p>
+ {!result.consolidated.length&&<p>Chưa có công nợ quá 2 tháng cần cộng gộp.</p>}
+ {result.consolidated.map((row:PayrollReportRow)=><article key={JSON.stringify([row.recipientId,row.departmentId])} className="review-card"><h3>{row.employeeCode} · {row.worker} · {row.departmentName}</h3><p>Kỳ gộp: {row.fromPeriod} đến {row.period}</p><p>Tổng lương: {row.total.toLocaleString('vi-VN')} đ · Đã ứng: {row.advance.toLocaleString('vi-VN')} đ · Đã thanh toán: {row.paid.toLocaleString('vi-VN')} đ</p><p><strong>Còn phải trả: {row.balance.toLocaleString('vi-VN')} đ</strong></p>
+ <button className="btn" onClick={()=>setSlip(row)}>Xem phiếu cộng gộp</button><button className="btn" disabled={exporting} onClick={()=>void download('xlsx','arrears',row)}>Phiếu gộp XLSX</button><button className="btn" disabled={exporting} onClick={()=>void download('pdf','arrears',row)}>Phiếu gộp PDF</button><button className="btn" disabled={!row.recipientId||!row.departmentId} onClick={()=>setPaymentTarget(row)}>Ghi nhận thanh toán nợ</button></article>)}</section><p><strong>Tổng lương các phòng ban đang xem: {result.totals.reduce((sum:number,row:any)=>sum+row.total,0).toLocaleString('vi-VN')} đ</strong></p><div className="members-grid">{result.totals.map((row:any)=><article key={row.name} className="review-card"><h2>{row.name}</h2><p>Tổng giờ: {row.hours.toFixed(2)}</p><p>Tổng lương: {row.total.toLocaleString('vi-VN')} đ</p><p>Đã ứng: {row.advance.toLocaleString('vi-VN')} đ · Đã thanh toán: {row.paid.toLocaleString('vi-VN')} đ</p><p>Còn phải trả: {row.balance.toLocaleString('vi-VN')} đ</p></article>)}</div>
+ <div style={{overflowX:'auto'}}><table style={{width:'100%',minWidth:850,textAlign:'left'}}><thead><tr>{['Kỳ lương','Phòng ban','Mã NV','Nhân viên','Tổng giờ','Tổng lương','Tiền đã ứng','Đã thanh toán','Còn phải trả','Phiếu lương'].map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{groups.map(row=><tr key={payrollReportKey(row)}><td>{row.period}</td><td>{row.departmentName}</td><td>{row.employeeCode}</td><td>{row.worker}</td><td>{row.hours.toFixed(2)}</td><td>{row.total.toLocaleString('vi-VN')}</td><td>{row.advance.toLocaleString('vi-VN')}</td><td>{row.paid.toLocaleString('vi-VN')}</td><td>{row.balance.toLocaleString('vi-VN')}</td><td><button className="btn" onClick={()=>setSlip(autoSlip(row))}>Xem phiếu lương</button><button className="btn" disabled={exporting} onClick={()=>void download('xlsx','slips',autoSlip(row))}>Phiếu XLSX</button><button className="btn" disabled={exporting} onClick={()=>void download('pdf','slips',autoSlip(row))}>Phiếu PDF</button><button className="btn" disabled={!row.recipientId||!row.departmentId} onClick={()=>setPaymentTarget(row)}>Ghi nhận ứng / trả lương</button></td></tr>)}</tbody></table></div>
  {!groups.length&&<p>Chưa có phiếu lương phù hợp. Tổng hợp giờ vào lương từ mục Chấm công để tạo phiếu.</p>}</>}
  </section>;
 }

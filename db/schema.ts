@@ -88,3 +88,13 @@ export const evidenceChangeRequests=mysqlTable('evidence_change_requests',{
  reason:text('reason').notNull(),requestedBy:id('requested_by').notNull(),requestedAt:iso('requested_at').notNull(),
  status:varchar('status',{length:12}).notNull(),resolvedAt:iso('resolved_at'),
 });
+
+export const salaryPayments=mysqlTable('salary_payments',{
+ id:id().primaryKey(),batchId:id('batch_id').notNull(),requestHash:varchar('request_hash',{length:64}).notNull(),
+ recipientId:id('recipient_id').notNull().references(()=>users.id),departmentId:varchar('department_id',{length:36}).notNull(),period:varchar('period',{length:7}).notNull(),
+ kind:varchar('kind',{length:12}).notNull(),amount:bigint('amount',{mode:'number'}).notNull(),paidAt:varchar('paid_at',{length:10}).notNull(),note:text('note').notNull(),metadata:json('metadata').notNull(),
+ createdBy:id('created_by').notNull(),createdAt:iso('created_at').notNull(),voided:int('voided').notNull().default(0),voidReason:text('void_reason'),voidedBy:id('voided_by'),voidedAt:iso('voided_at'),
+},t=>[index('salary_payments_scope').on(t.recipientId,t.departmentId,t.period),index('salary_payments_batch').on(t.batchId)]);
+export const salaryPaymentBatches=mysqlTable('salary_payment_batches',{
+ id:id().primaryKey(),requestHash:varchar('request_hash',{length:64}).notNull(),recipientId:id('recipient_id').notNull(),departmentId:varchar('department_id',{length:36}).notNull(),createdBy:id('created_by').notNull(),createdAt:iso('created_at').notNull(),
+});

@@ -219,3 +219,13 @@ Cấu hình `VIETQR_CLIENT_ID` và `VIETQR_API_KEY` từ My VietQR ở máy ch�
 - **Nhóm của tôi → Website hoạt động của nhóm** có ô dán link và nút mở website ở tab mới. Người tạo nhóm, trưởng nhóm được bầu hoặc admin (có quyền vào nhóm) cập nhật link; các thành viên khác xem và mở link. Để trống rồi lưu để gỡ link.
 - Chỉ nhận HTTP/HTTPS, tự thêm HTTPS khi dán tên miền chưa có giao thức; từ chối link chứa mã thực thi hoặc thông tin đăng nhập. Hệ thống không truy cập nội dung website bên ngoài khi lưu link.
 - Migration: `0017_attendance_supplement_team_website.sql`.
+
+### Ứng lương, thanh toán và cộng gộp công nợ
+
+- Phiếu lương hiển thị **Tổng lương − tiền đã ứng − lương đã thanh toán = còn phải trả**. Khoản ứng đã có trong dòng bảng lương được cộng với các khoản ứng mới ghi nhận; không nhập lại cùng một khoản ứng vào hai nơi.
+- Trong **Xem bảng lương nhân viên**, dùng **Ghi nhận ứng / trả lương** để lưu khoản chi thực tế theo nhân viên, phòng ban và kỳ lương. Có ngày chi, ghi chú, lịch sử và hủy ghi nhận sai có lý do. Chỉ admin và quản lý trong phạm vi phòng ban được phép ghi nhận hoặc hủy. Đây là lưu sổ ứng/thanh toán; không gọi API chuyển tiền.
+- Dữ liệu cũ chưa có trạng thái lương đã trả. Người quản lý cần ghi nhận các khoản đã thanh toán trước đây để công nợ không bị tính dư. Giá trị tiền ứng cũ được tính sẵn, không cần nhập lại.
+- **Tổng cộng gộp công nợ** tự tạo phiếu khi một kỳ còn nợ cũ hơn kỳ đang xem trên 2 tháng. Ví dụ xem 2026-11, kỳ 2026-08 còn nợ sẽ kích hoạt. Phiếu gồm các kỳ chưa tất toán đến kỳ đang xem (và kỳ hiện tại), bỏ các kỳ cũ đã trả hết; tiền ứng, lương đã trả và số còn lại được trình bày từng kỳ. Phần ứng vượt lương của cùng nhân viên/phòng ban được giữ như số dư để trừ trong phiếu gộp.
+- Phiếu gộp được tính từ sổ gốc, không tạo bản ghi thu nhập trùng. Trả nợ từ phiếu gộp phân bổ vào các kỳ cũ nhất trước; chặn số trả vượt số còn nợ. Yêu cầu lưu có khóa giao dịch và khóa dòng để gửi lại cùng thao tác không cộng tiền hai lần.
+- Có XLSX/PDF phiếu gộp và trang chi tiết công nợ từng kỳ. Phiếu tháng trên trang nhân viên cũng tự dùng phiếu gộp khi đủ điều kiện. Chọn cả năm dùng kỳ cuối năm làm mốc đối chiếu; báo cáo tháng dùng chính kỳ đã chọn.
+- Migration: `0018_salary_payments.sql` tạo sổ chi trả và bảng khóa giao dịch. Lịch tổng hợp giờ công không ghi đè sổ ứng/thanh toán.
