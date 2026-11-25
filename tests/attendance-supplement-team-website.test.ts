@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {historicalAttendance} from '../lib/attendance-supplement.ts';
+import {historicalAttendance,overlapsAttendance} from '../lib/attendance-supplement.ts';
 import {teamWebsite,canEditTeamWebsite} from '../lib/team-website.ts';
 import {netShiftMinutes} from '../lib/attendance.ts';
 const now=new Date('2026-11-25T02:00:00Z');
@@ -32,4 +32,12 @@ test('team website editing is restricted to owner, elected leader and admin',()=
  const team={ownerId:'owner',leaderId:'leader'};
  assert.equal(canEditTeamWebsite('owner',team),true);assert.equal(canEditTeamWebsite('leader',team),true);
  assert.equal(canEditTeamWebsite('member',team),false);assert.equal(canEditTeamWebsite('member',team,true),true);
+});
+
+test('supplementation detects overlapping overnight and still-open shifts but accepts adjacent shifts',()=>{
+ const rows=[{start:'2026-11-24T22:00:00+07:00',end:'2026-11-25T06:00:00+07:00'}];
+ assert.equal(overlapsAttendance('2026-11-25T05:00:00+07:00','2026-11-25T10:00:00+07:00',rows),true);
+ assert.equal(overlapsAttendance('2026-11-24T20:00:00+07:00','2026-11-24T22:00:00+07:00',rows),false);
+ assert.equal(overlapsAttendance('2026-11-25T06:00:00+07:00','2026-11-25T10:00:00+07:00',rows),false);
+ assert.equal(overlapsAttendance('2026-11-24T23:00:00+07:00','2026-11-25T03:00:00+07:00',[{start:rows[0].start,end:null}]),true);
 });

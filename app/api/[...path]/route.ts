@@ -1,4 +1,4 @@
-import {historicalAttendance} from '../../../lib/attendance-supplement';
+import {historicalAttendance,overlapsAttendance} from '../../../lib/attendance-supplement';
 import {teamWebsite,canEditTeamWebsite} from '../../../lib/team-website';
 import {payrollPdf,payrollXlsx} from '../../../lib/payroll-export';
 import {validReportYear,payrollReportKey} from '../../../lib/payroll-report';
@@ -482,6 +482,8 @@ async function handle(req:Request){
    await db.transaction(async tx=>{
     const [employee]=await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,userId)).for('update');check(employee,'EMPLOYEE_NOT_ASSIGNED',404);
     const [existing]=await tx.select({id:attendanceEntries.id}).from(attendanceEntries).where(and(eq(attendanceEntries.userId,userId),eq(attendanceEntries.day,data.day))).for('update');check(!existing,'ATTENDANCE_EXISTS',409);
+    const intervals=await tx.select({start:attendanceEntries.start,end:attendanceEntries.end}).from(attendanceEntries).where(eq(attendanceEntries.userId,userId)).for('update');
+    check(!overlapsAttendance(data.start,data.end,intervals),'ATTENDANCE_OVERLAP',409);
     await tx.insert(attendanceEntries).values({id,userId,...data,supplemented:1,updatedBy:user.id,updatedAt});
     await tx.insert(attendanceAudit).values({id:uid(),entryId:id,actorId:user.id,data:{action:'attendance-supplement',employeeId:userId,...data},createdAt:updatedAt});
    });

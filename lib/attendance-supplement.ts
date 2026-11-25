@@ -14,3 +14,7 @@ export function historicalAttendance(input:Record<string,unknown>,currentTime=ne
  if(!reason||reason.length>1000)throw Error('VALIDATION');
  return {day,start,end,breakMinutes,reason};
 }
+export function overlapsAttendance(start:string,end:string,entries:{start:string;end:string|null}[]){
+ const from=Date.parse(start),to=Date.parse(end);
+ return entries.some(entry=>Date.parse(entry.start)<to&&(entry.end===null||Date.parse(entry.end)>from));
+}
