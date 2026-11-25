@@ -158,11 +158,20 @@ async function handle(req:Request){
    return ok({count:vocabulary.length,enabled:data.enabled});
   }
  }
+ if(isAptis&&path[1]==='skip'&&method==='POST'){
+  const data={id:uid(),questions:[],scores:[],passed:false,skipped:true};
+  await db.insert(aptisChallenges).values({sessionId,data}).onDuplicateKeyUpdate({set:{
+   data:sql`JSON_SET(${aptisChallenges.data}, '$.skipped', CAST('true' AS JSON))`,
+  }});
+  return ok(null);
+ }
  if(isAptis&&path[1]==='start'&&method==='POST'){
   if(!aptisEnabled)return ok(null);
+  const existing=await challengeFor() as (AptisChallenge&{skipped?:boolean})|undefined;
+  if(existing?.skipped||existing?.passed)return ok(null);
   const questions=createAptisQuestions(await getAptisVocabulary());
   const challenge:AptisChallenge={id:uid(),questions,scores:questions.map(()=>null),passed:false};
-  await db.insert(aptisChallenges).values({sessionId,data:challenge}).onDuplicateKeyUpdate({set:{data:challenge}});
+  await db.insert(aptisChallenges).values({sessionId,data:challenge}).onDuplicateKeyUpdate({set:{data:sql`CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.skipped')) = 'true' THEN ${aptisChallenges.data} ELSE CAST(${JSON.stringify(challenge)} AS JSON) END`}});
   return ok({id:challenge.id,questions:publicAptisQuestions(questions)});
  }
  if(isAptis&&path[1]==='submit'&&method==='POST'){
@@ -212,7 +221,7 @@ async function handle(req:Request){
  if(aptisEnabled){
   const [unlocked]=await db.select({sessionId:aptisChallenges.sessionId}).from(aptisChallenges).where(and(
    eq(aptisChallenges.sessionId,sessionId),
-   sql`JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.passed')) = 'true'`,
+   sql`(JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.passed')) = 'true' OR JSON_UNQUOTE(JSON_EXTRACT(${aptisChallenges.data}, '$.skipped')) = 'true')`,
   )).limit(1);
   check(unlocked,'APTIS_REQUIRED',403);
  }

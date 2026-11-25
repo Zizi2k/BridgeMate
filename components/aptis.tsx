@@ -69,6 +69,13 @@ export function AptisGate({lang,controls,onContinue,onLogout}:{
   finally{setHintIndex(null)}
  }
 
+ async function skip(){
+  setBusy(true);setError('');
+  try{await aptisRequest('skip','POST',{});onContinue()}
+  catch(err){setError((err as Error).message)}
+  finally{setBusy(false)}
+ }
+
  async function logout(){
   setBusy(true);setError('');
   try{await onLogout()}
@@ -86,9 +93,10 @@ export function AptisGate({lang,controls,onContinue,onLogout}:{
   </header>
   <section className={styles.intro} aria-labelledby="aptis-title">
    <BookOpen size={24} aria-hidden="true"/>
-   <div><h1 id="aptis-title">{t('Aptis vocabulary','Từ vựng Aptis')}</h1><p>{t('Answer all 5 questions correctly to open your workspace.','Trả lời đúng cả 5 câu để vào không gian làm việc.')}</p></div>
+   <div><h1 id="aptis-title">{t('Aptis vocabulary','Từ vựng Aptis')}</h1><p>{t('Practice 5 vocabulary questions, or skip to open your workspace.','Luyện 5 câu từ vựng, hoặc bỏ qua để vào không gian làm việc.')}</p></div>
    <strong className={styles.score}>{score}/5</strong>
   </section>
+  <div className={styles.actions}><button type="button" className="btn" disabled={busy} onClick={()=>void skip()}>{t('Skip and enter workspace','Bỏ qua và vào web')}</button></div>
   {loading&&<p className={styles.status} role="status"><Loader2 className="spin" size={18}/>{t('Preparing your questions…','Đang chuẩn bị câu hỏi…')}</p>}
   {error&&<div className="error" role="alert">
    {error==='APTIS_EXPIRED'?t('This set was replaced in another tab. Start a new set.','Bộ câu hỏi đã được thay ở tab khác. Hãy tải bộ mới.'):t('Could not complete the request. Please try again.','Chưa thực hiện được yêu cầu. Vui lòng thử lại.')}
