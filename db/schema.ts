@@ -1,7 +1,7 @@
 import {mysqlTable,varchar,text,mediumtext,int,bigint,uniqueIndex,index,primaryKey,json} from 'drizzle-orm/mysql-core';
 const id=(name='id')=>varchar(name,{length:36});
 const iso=(name:string)=>varchar(name,{length:32});
-export const users=mysqlTable('users',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),email:varchar('email',{length:254}).notNull().unique(),password:varchar('password',{length:255}).notNull(),demo:int('demo').notNull().default(0)});
+export const users=mysqlTable('users',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),email:varchar('email',{length:254}).notNull().unique(),password:varchar('password',{length:255}).notNull(),demo:int('demo').notNull().default(0),mustChangePassword:int('must_change_password').notNull().default(0)});
 export const sessions=mysqlTable('sessions',{id:varchar('id',{length:64}).primaryKey(),userId:id('user_id').notNull().references(()=>users.id),expires:bigint('expires',{mode:'number'}).notNull()},t=>[index('sessions_user_index').on(t.userId),index('sessions_expiry_index').on(t.expires)]);
 export const teams=mysqlTable('teams',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),description:text('description').notNull(),website:varchar('website',{length:2048}).notNull().default(''),ownerId:id('owner_id').notNull().references(()=>users.id),leaderId:id('leader_id').references(()=>users.id),deleted:int('deleted').notNull().default(0),invite:varchar('invite',{length:32}).notNull().unique()});
 export const members=mysqlTable('members',{id:id().primaryKey(),teamId:id('team_id').notNull().references(()=>teams.id),userId:id('user_id').notNull().references(()=>users.id),role:varchar('role',{length:16}).notNull()},t=>[uniqueIndex('members_team_user_unique').on(t.teamId,t.userId)]);
@@ -103,3 +103,7 @@ export const attendanceNotifications=mysqlTable('attendance_notifications',{
  id:varchar('id',{length:64}).primaryKey(),entryId:id('entry_id').notNull(),recipientId:id('recipient_id').notNull(),email:varchar('email',{length:254}).notNull(),payload:json('payload').notNull(),
  status:varchar('status',{length:16}).notNull().default('pending'),attempts:int('attempts').notNull().default(0),firstAttemptAt:iso('first_attempt_at'),createdAt:iso('created_at').notNull(),sentAt:iso('sent_at'),readAt:iso('read_at'),lastError:varchar('last_error',{length:80}).notNull().default(''),
 },t=>[index('attendance_notification_status').on(t.status,t.createdAt)]);
+
+export const passwordRecovery=mysqlTable('password_recovery',{
+ userId:id('user_id').primaryKey().references(()=>users.id,{onDelete:'cascade'}),status:varchar('status',{length:16}).notNull(),requestedAt:iso('requested_at').notNull(),reviewedAt:iso('reviewed_at'),reviewedBy:id('reviewed_by'),
+});

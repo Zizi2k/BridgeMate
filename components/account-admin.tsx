@@ -1,4 +1,5 @@
 'use client';
+import {PasswordRecoveryAdmin} from './password-recovery';
 
 import {useEffect,useState} from 'react';
 import {DepartmentAdmin,departmentRequest,type Department} from './departments';
@@ -90,7 +91,7 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
  return <section>
   <div className="page-heading"><div><h1>{t('Account administration','Quản trị tài khoản')}</h1></div></div>
   {ownerAdmin&&<ModuleVisibility lang={lang}/>}
-  {ownerAdmin&&<DepartmentAdmin departments={departments} onChanged={loadDepartments}/>}
+  {ownerAdmin&&<><PasswordRecoveryAdmin/><DepartmentAdmin departments={departments} onChanged={loadDepartments}/></>}
   <PrintTemplateEditor/>
   <AptisBank lang={lang}/>
   {error&&<p role="alert">{t('Could not complete the request. Reload and try again.','Không thể thực hiện thao tác. Tải lại trang và thử lại.')}</p>}

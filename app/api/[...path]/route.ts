@@ -1,3 +1,5 @@
+import {shouldQueueRecovery,validReplacementPassword} from '../../../lib/password-recovery-policy';
+import {canAssignManagedTask} from '../../../lib/managed-teams';
 import {after} from 'next/server';
 import {queueAttendanceMail,flushAttendanceMail,attendanceMailConfigured} from '../../../lib/attendance-email';
 import {settlePayroll,consolidateArrears,allocateSalary} from '../../../lib/payroll-arrears';
@@ -27,7 +29,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications,passwordRecovery} from '../../../db/schema';
 import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -40,7 +42,7 @@ function check(v:any,code='VALIDATION',status=400):asserts v{if(!v)throw new Api
 function str(v:any,max=4000){check(typeof v==='string'&&v.trim().length>0&&v.length<=max);return v.trim()}
 const hex=(v:ArrayBuffer|Uint8Array)=>Array.from(new Uint8Array(v instanceof Uint8Array?v.buffer:v)).map(x=>x.toString(16).padStart(2,'0')).join('');
 async function hash(password:string,salt=hex(crypto.getRandomValues(new Uint8Array(16)))){const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);return salt+':'+hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(salt),iterations:100000},key,256));}
-function publicUser(u:any){return {id:u.id,name:u.name,email:u.email,demo:!!u.demo,accountRole:accountRole(u)}}
+function publicUser(u:any){return {id:u.id,name:u.name,email:u.email,demo:!!u.demo,accountRole:accountRole(u),mustChangePassword:!!u.mustChangePassword}}
 async function handle(req:Request){
  const db=getDb(),url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,'').split('/').filter(Boolean),method=req.method;
  const ok=(data:any,status=200,headers:Record<string,string>={})=>Response.json({data},{status,headers:{'Cache-Control':'no-store',...headers}});
@@ -55,16 +57,39 @@ async function handle(req:Request){
  check(body&&typeof body==='object'&&!Array.isArray(body));
  check(JSON.stringify(body).length<(path[0]==='attendance'&&path[2]==='photos'?4300000:path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
  async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);const [employee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,u.id));const [department]=await db.select({id:departments.id,name:departments.name,status:accountDepartments.status}).from(accountDepartments).innerJoin(departments,and(eq(accountDepartments.departmentId,departments.id),eq(departments.active,1))).where(eq(accountDepartments.userId,u.id));return {...publicUser(u),departmentId:department?.id||'',departmentName:department?.name||'',departmentStatus:department?.status||'',accountRole:accountRole(u)==='admin'?'admin':employee?.manager?'manager':accountRole(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
- async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
+ async function session(u:any,executor:any=db){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await executor.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
  if(path[0]==='auth'){
+  if(path[1]==='forgot-password'&&method==='POST'){
+   const email=str(body.email,254).toLowerCase();check(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+   await db.transaction(async tx=>{
+    const [target]=await tx.select().from(users).where(eq(users.email,email)).for('update');
+    if(!target||target.demo||await removed(target.id)||await suspended(target.id))return;
+    const [previous]=await tx.select().from(passwordRecovery).where(eq(passwordRecovery.userId,target.id));
+    if(!shouldQueueRecovery(previous))return;
+    await tx.insert(passwordRecovery).values({userId:target.id,status:'pending',requestedAt:now()}).onDuplicateKeyUpdate({set:{status:'pending',requestedAt:now(),reviewedAt:null,reviewedBy:null}});
+   });
+   return ok({message:'Nếu email thuộc tài khoản hợp lệ, yêu cầu đã được gửi đến admin. Vui lòng liên hệ admin để xác minh và nhận mật khẩu tạm.'});
+  }
+  if(path[1]==='change-password'&&method==='POST'){
+   check(user&&!user.demo,'UNAUTHORIZED',401);
+   const current=str(body.currentPassword,128),next=str(body.newPassword,128);check(validReplacementPassword(current,next),'VALIDATION');
+   const encoded=await hash(next);
+   return db.transaction(async tx=>{
+    const [target]=await tx.select().from(users).where(eq(users.id,user.id)).for('update');
+    check(target&&target.password===await hash(current,target.password.split(':')[0]),'INVALID_LOGIN',403);
+    await tx.update(users).set({password:encoded,mustChangePassword:0}).where(eq(users.id,user.id));
+    await tx.delete(sessions).where(eq(sessions.userId,user.id));
+    return session({...target,password:encoded,mustChangePassword:0},tx);
+   });
+  }
   if(path[1]==='me')return ok(user?await userSummary(user):null);
   if(path[1]==='logout'&&method==='POST'){if(token)await db.delete(sessions).where(eq(sessions.id,token));return ok(null,200,{'Set-Cookie':'bm_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'})}
   if((path[1]==='register'||path[1]==='login')&&method==='POST'){
    const email=str(body.email,254).toLowerCase(),password=str(body.password,128);check(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
    const u=await db.select().from(users).where(eq(users.email,email)).limit(1).then(rows=>rows[0]);
    if(path[1]==='register'){check(password.length>=8);check(!u,'EMAIL_EXISTS',409);const n={id:uid(),name:str(body.name,80),email,password:await hash(password),demo:0};await db.insert(users).values(n);return session(n)}
-   check(u&&!u.demo&&u.password===await hash(password,u.password.split(':')[0]),'INVALID_LOGIN',401);check(!await suspended(u.id)&&!await removed(u.id),'ACCOUNT_SUSPENDED',403);return session(u);
+   return db.transaction(async tx=>{const [fresh]=await tx.select().from(users).where(eq(users.email,email)).for('update');check(fresh&&!fresh.demo&&fresh.password===await hash(password,fresh.password.split(':')[0]),'INVALID_LOGIN',401);check(!await suspended(fresh.id)&&!await removed(fresh.id),'ACCOUNT_SUSPENDED',403);return session(fresh,tx)});
   }
   if(path[1]==='demo'&&method==='POST'){
    if(user)return ok(await userSummary(user));
@@ -82,6 +107,7 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
  check(user,'UNAUTHORIZED',401);
+ check(!user.mustChangePassword,'PASSWORD_CHANGE_REQUIRED',403);
   const dailyLimit=Math.min(200,Math.max(1,Number(process.env.AI_DAILY_LIMIT)||30));
  async function reserveAIRequest(){
    const time=Date.now(),day=new Date(time).toISOString().slice(0,10);
@@ -435,6 +461,20 @@ async function handle(req:Request){
  }
  if(path[0]==='admin'){
   check(admin,'FORBIDDEN',403);
+  if(path[1]==='password-recovery'){
+   if(method==='GET'&&path.length===2)return ok(await db.select({userId:passwordRecovery.userId,status:passwordRecovery.status,requestedAt:passwordRecovery.requestedAt,name:users.name,email:users.email}).from(passwordRecovery).innerJoin(users,eq(users.id,passwordRecovery.userId)).leftJoin(removedAccounts,eq(removedAccounts.userId,users.id)).where(and(eq(passwordRecovery.status,'pending'),isNull(removedAccounts.userId))).orderBy(passwordRecovery.requestedAt));
+   check(method==='POST'&&path.length===3,'NOT_FOUND',404);check(body.verified===true,'VALIDATION');
+   const temporary=hex(crypto.getRandomValues(new Uint8Array(16))),encoded=await hash(temporary);
+   await db.transaction(async tx=>{
+    const [target]=await tx.select().from(users).where(eq(users.id,path[2])).for('update');
+    check(target&&!target.demo&&target.id!==user.id&&!await removed(target.id),'FORBIDDEN',403);
+    const [request]=await tx.select().from(passwordRecovery).where(eq(passwordRecovery.userId,target.id)).for('update');check(request?.status==='pending','NOT_FOUND',404);
+    await tx.update(users).set({password:encoded,mustChangePassword:1}).where(eq(users.id,target.id));
+    await tx.delete(sessions).where(eq(sessions.userId,target.id));
+    await tx.update(passwordRecovery).set({status:'approved',reviewedAt:now(),reviewedBy:user.id}).where(eq(passwordRecovery.userId,target.id));
+   });
+   return ok({temporaryPassword:temporary});
+  }
   if(path[1]==='accounts'&&path.length===2&&method==='GET'){
    const page=Number(url.searchParams.get('page')||1);
    check(Number.isSafeInteger(page)&&page>=1&&page<=10000);
@@ -746,6 +786,42 @@ async function handle(req:Request){
   throw new ApiError('NOT_FOUND',404);
  }
 
+ if(path[0]==='managed-teams'){
+  check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+  const eligible=await db.select({id:users.id,name:users.name,code:employeeAssignments.code}).from(users).innerJoin(employeeAssignments,eq(employeeAssignments.userId,users.id)).innerJoin(accountDepartments,and(eq(accountDepartments.userId,users.id),eq(accountDepartments.status,'approved'))).innerJoin(departments,and(eq(departments.id,accountDepartments.departmentId),eq(departments.active,1))).leftJoin(accountAccess,eq(accountAccess.userId,users.id)).leftJoin(removedAccounts,eq(removedAccounts.userId,users.id)).where(and(eq(users.demo,0),isNull(removedAccounts.userId),sql`COALESCE(${accountAccess.suspended},0)=0`,ownerAdmin?undefined:eq(accountDepartments.departmentId,currentDepartment.departmentId)));
+  const ids=eligible.map(row=>row.id);
+  const roster=ids.length?await db.select({teamId:members.teamId,userId:members.userId}).from(members).where(inArray(members.userId,ids)):[];
+  const teamIds=[...new Set(roster.map(row=>row.teamId))];
+  if(path.length===1&&method==='GET'){
+   const list=teamIds.length?await db.select({id:teams.id,name:teams.name,description:teams.description}).from(teams).where(and(eq(teams.deleted,0),inArray(teams.id,teamIds))):[];
+   return ok(list.map(team=>({...team,employees:eligible.filter(person=>roster.some(row=>row.teamId===team.id&&row.userId===person.id))})));
+  }
+  check(teamIds.includes(path[1]),'FORBIDDEN',403);
+  const [team]=await db.select().from(teams).where(and(eq(teams.id,path[1]),eq(teams.deleted,0)));check(team,'NOT_FOUND',404);
+  const people=eligible.filter(person=>roster.some(row=>row.teamId===team.id&&row.userId===person.id));
+  if(path.length===2&&method==='GET'){
+   const rows=await db.select().from(tasks).where(and(eq(tasks.teamId,team.id),eq(tasks.deleted,0),inArray(tasks.assigneeId,people.map(p=>p.id)))).orderBy(desc(tasks.createdAt));
+   return ok({team:{id:team.id,name:team.name,description:team.description,website:team.website},employees:people,tasks:rows});
+  }
+  check(path[2]==='tasks','NOT_FOUND',404);
+  check((method==='POST'&&path.length===3)||(method==='PATCH'&&path.length===4),'NOT_FOUND',404);
+  const dueAt=str(body.dueAt,40);check(Number.isFinite(Date.parse(dueAt)),'VALIDATION');
+  return ok(await db.transaction(async tx=>{
+   const [active]=await tx.select().from(teams).where(eq(teams.id,team.id)).for('update');check(active&&!active.deleted,'FORBIDDEN',403);
+   const ms=await tx.select({id:members.userId}).from(members).where(eq(members.teamId,team.id));
+   const memberIds=ms.map(row=>row.id);
+   if(method==='POST'){
+    const assigneeId=str(body.assigneeId,36);check(canAssignManagedTask(ownerAdmin,ids,memberIds,assigneeId)&&ids.includes(assigneeId),'FORBIDDEN',403);
+    check(['low','medium','high'].includes(body.priority));
+    const task={id:uid(),teamId:team.id,title:str(body.title,160),description:str(body.description),deliverable:str(body.deliverable,1000),assigneeId,createdBy:user.id,dueAt:new Date(dueAt).toISOString(),priority:body.priority,status:'todo',version:1,createdAt:now()};
+    await tx.insert(tasks).values(task);return {id:task.id};
+   }
+   const [task]=await tx.select().from(tasks).where(and(eq(tasks.id,path[3]),eq(tasks.teamId,team.id),eq(tasks.deleted,0))).for('update');check(task,'NOT_FOUND',404);
+   check(canAssignManagedTask(ownerAdmin,ids,memberIds,task.assigneeId)&&ids.includes(task.assigneeId),'FORBIDDEN',403);
+   const normalized=new Date(dueAt).toISOString();if(normalized!==task.dueAt)await tx.update(tasks).set({dueAt:normalized,version:task.version+1}).where(eq(tasks.id,task.id));
+   return {id:task.id};
+  }),method==='POST'?201:200);
+ }
  async function teamAccess(id:string){const team=await db.select().from(teams).where(eq(teams.id,id)).limit(1).then(rows=>rows[0]);const member=await db.select().from(members).where(and(eq(members.teamId,id),eq(members.userId,user.id))).limit(1).then(rows=>rows[0]);check(team&&member&&!team.deleted,'FORBIDDEN',403);return team}
  async function taskAccess(id:string){const task=await db.select().from(tasks).where(eq(tasks.id,id)).limit(1).then(rows=>rows[0]);check(task&&!task.deleted,'NOT_FOUND',404);const team=await teamAccess(task.teamId);return {task,team}}
  if(path[0]==='profiles'){
