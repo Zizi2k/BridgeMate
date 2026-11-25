@@ -1,3 +1,4 @@
+import {dailyWork,replacementFits} from '../../../lib/daily-work';
 import {shouldQueueRecovery,validReplacementPassword} from '../../../lib/password-recovery-policy';
 import {canAssignManagedTask} from '../../../lib/managed-teams';
 import {after} from 'next/server';
@@ -10,7 +11,7 @@ import {validReportYear,payrollReportKey,payrollIdentityKey} from '../../../lib/
 import {canManageDepartment,searchEmployee} from '../../../lib/department-policy';
 import {MAX_EVIDENCE_BYTES,imageFilenameAllowed,evidenceExpiry,evidencePreviewMime,canUploadEvidence,canReplaceEvidence,canRequestEvidenceChange} from '../../../lib/attendance-evidence';
 import {purgeAttendancePhotos} from '../../../lib/attendance-photo-cleanup';
-import {localDay,shiftMinutes,netShiftMinutes} from '../../../lib/attendance';
+import {localDay,shiftMinutes,netShiftMinutes,monthMinutes} from '../../../lib/attendance';
 import {attendancePayroll,closeAttendanceMonths} from '../../../lib/attendance-payroll';
 import {aptisPhotoKey,aptisPhotoSlots} from '../../../lib/aptis-photos';
 import aptisVocabulary from '../../../lib/data/aptis-vocabulary.json';
@@ -363,6 +364,44 @@ async function handle(req:Request){
   if(method==='PATCH'&&path[1]){const name=str(body.name,120);check(typeof body.active==='boolean');await db.update(departments).set({name,active:body.active?1:0}).where(eq(departments.id,path[1]));return ok(null)}
   throw new ApiError('NOT_FOUND',404);
  }
+ if(path[0]==='daily-work'){
+  check(!user.demo,'FORBIDDEN',403);
+  const period=(method==='GET'?url.searchParams.get('period'):body.period)||localDay().slice(0,7);check(payPeriodPattern.test(period));
+  const ids=ownerAdmin?null:departmentManager?await departmentEmployeeIds():[user.id];
+  if(method==='GET'){
+   const employees=await db.select().from(employeeAssignments).where(ids?inArray(employeeAssignments.userId,ids.length?ids:['']):undefined);
+   const rows=await db.select().from(payrollEntries).where(and(eq(payrollEntries.scopeId,'team:daily-work'),sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`));
+   return ok({canManage:ownerAdmin||departmentManager,employees,rows:rows.flatMap(row=>{const data=row.data as any;if(ids&&!ids.includes(data.recipientId)||departmentManager&&!ownerAdmin&&data.departmentId!==currentDepartment.departmentId)return [];return [{...data,id:row.id}]})});
+  }
+  check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+  let employeeId=str(body.userId,36);check(await managesEmployee(employeeId),'FORBIDDEN',403);check(!await removed(employeeId),'NOT_FOUND',404);
+  const [employee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,employeeId));check(employee,'EMPLOYEE_NOT_ASSIGNED',404);
+  const departmentId=await employeeDepartment(employeeId)||'';check(departmentId,'DEPARTMENT_REQUIRED');
+  const [baseline]=await db.select().from(payrollEntries).where(eq(payrollEntries.id,createHash('sha256').update('attendance:'+employeeId+':'+period).digest('hex').slice(0,36)));
+  const base=(baseline?.data||{}) as any;
+  check(ownerAdmin||!base.departmentId||base.departmentId===departmentId,'FORBIDDEN',403);
+  if(method==='DELETE'&&path[1]){
+   await db.transaction(async tx=>{await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,employeeId)).for('update');const [row]=await tx.select().from(payrollEntries).where(and(eq(payrollEntries.id,path[1]),eq(payrollEntries.scopeId,'team:daily-work'))).for('update');const d=row?.data as any;check(row&&d.recipientId===employeeId&&d.period===period&&(ownerAdmin||d.departmentId===departmentId),'FORBIDDEN',403);await tx.delete(payrollEntries).where(eq(payrollEntries.id,row.id));await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{action:'daily-work-removed',before:d},createdAt:now()})});
+  }else{
+   check(method==='POST'&&!path[1],'NOT_FOUND',404);
+   let detail:ReturnType<typeof dailyWork>;try{detail=dailyWork(body,base.rate??employee.rate,localDay())}catch{throw new ApiError('INVALID_DAILY_WORK')}
+   check(detail.day.startsWith(period),'VALIDATION');const id=str(body.id,36);check(/^[0-9a-f-]{36}$/i.test(id));const requestHash=createHash('sha256').update(JSON.stringify([employeeId,detail.day,detail.title,detail.note,detail.kind,detail.basis,detail.minutes,detail.rate])).digest('hex');
+   await db.transaction(async tx=>{
+    await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,employeeId)).for('update');
+    const [existingRequest]=await tx.select().from(payrollEntries).where(eq(payrollEntries.id,id));if(existingRequest){check(existingRequest.scopeId==='team:daily-work'&&(existingRequest.data as any).requestHash===requestHash,'CONFLICT',409);return}
+    if(detail.kind==='replace'){
+     const [shift]=await tx.select().from(attendanceEntries).where(and(eq(attendanceEntries.userId,employeeId),eq(attendanceEntries.day,detail.day))).for('update');check(shift?.end,'COMPLETED_SHIFT_REQUIRED');
+     const rows=await tx.select().from(payrollEntries).where(eq(payrollEntries.scopeId,'team:daily-work'));
+     const existing=rows.flatMap(row=>{const d=row.data as any;return d.recipientId===employeeId&&d.workDate===detail.day&&d.workDetails?.[0]?.kind==='replace'?[d.workDetails[0].minutes]:[]});
+     check(replacementFits(detail.minutes,existing,monthMinutes(shift.day,shift.start,shift.end,period,shift.breakMinutes)),'WORK_EXCEEDS_SHIFT');
+    }
+    const data={work:detail.title,worker:employee.name,recipientId:employeeId,employeeCode:employee.code,departmentId:detail.kind==='replace'?base.departmentId||departmentId:departmentId,period,mode:'hour',rate:detail.rate,hours:detail.kind==='extra'?detail.minutes/60:0,workDate:detail.day,start:'',end:'',plan:detail.note,total:detail.amount,balance:detail.amount,advance:0,commission:0,revenue:0,profit:-detail.amount,source:'daily-work',requestHash,updatedAt:now(),workDetails:[{...detail,id}]};
+    await tx.insert(payrollEntries).values({id,scopeId:'team:daily-work',data});await tx.insert(attendanceAudit).values({id:uid(),entryId:id,actorId:user.id,data:{action:'daily-work-added',after:data},createdAt:now()});
+   });
+  }
+  await attendancePayroll(period,true,false,undefined,employeeId,true);
+  return ok({saved:true});
+ }
  if(path[0]==='salary-payments'){
   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
   let recipientId=method==='GET'?url.searchParams.get('employeeId'):body.recipientId;
@@ -696,6 +735,9 @@ async function handle(req:Request){
     try{netShiftMinutes(start,end,breakMinutes)}catch{throw new ApiError('INVALID_BREAK')}
     const data={start:new Date(start).toISOString(),end:new Date(end).toISOString(),breakMinutes,reason,editable:0,updatedBy:user.id,updatedAt:now()};
     await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{before:row,after:data},createdAt:now()});
+    const custom=await tx.select().from(payrollEntries).where(eq(payrollEntries.scopeId,'team:daily-work'));
+    const replacements=custom.flatMap(item=>{const d=item.data as any;return d.recipientId===row.userId&&d.workDate===row.day&&d.workDetails?.[0]?.kind==='replace'?[d.workDetails[0].minutes as number]:[]});
+    if(replacements.length)check(replacements.reduce((a,b)=>a+b,0)<=monthMinutes(row.day,start,end,row.day.slice(0,7),breakMinutes),'WORK_EXCEEDS_SHIFT');
     await tx.update(attendanceEntries).set(data).where(eq(attendanceEntries.id,row.id));
    }
    return ok(null);

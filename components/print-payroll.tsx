@@ -4,7 +4,7 @@ import {payrollQr} from '../lib/payroll-qr';
 import {useEffect,useState,type FormEvent} from 'react';
 import {printDefaults,type PrintTemplate} from '../lib/module-access';
 
-type Slip={paid?:number;isConsolidated?:boolean;fromPeriod?:string;periods?:{period:string;total:number;advance:number;paid:number;balance:number}[];id:string;worker:string;work:string;employeeCode?:string;period:string;total:number;commission:number;advance:number;balance:number};
+type Slip={workDetails?:import('../lib/daily-work').WorkDetail[];paid?:number;isConsolidated?:boolean;fromPeriod?:string;periods?:{period:string;total:number;advance:number;paid:number;balance:number}[];id:string;worker:string;work:string;employeeCode?:string;period:string;total:number;commission:number;advance:number;balance:number};
 const keys=Object.keys(printDefaults) as Array<keyof PrintTemplate>;
 const headings:Partial<Record<keyof PrintTemplate,string>>={company:'Công ty',address:'Địa chỉ',salaryTitle:'Tiêu đề phiếu lương',advanceTitle:'Tiêu đề phiếu tạm ứng'};
 
@@ -152,6 +152,7 @@ export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{e
     {!advance&&<tr><td>12</td><th scope="row">Lương đã thanh toán</th><td>{money(entry.paid||0)}</td></tr>}
     {!advance&&<tr><td>13</td><th scope="row">{template.balance}</th><td>{money(remaining)}</td></tr>}
    </tbody></table>
+   {!!entry.workDetails?.length&&<><h3>Chi tiết công việc tính đơn giá riêng</h3><table><thead><tr><th>Ngày / Công việc</th><th>Cách tính</th><th>Tiền công</th><th>Điều chỉnh vào lương</th><th>Ghi chú</th></tr></thead><tbody>{entry.workDetails.map(item=><tr key={item.id}><td>{item.day}<br/>{item.title}</td><td>{item.kind==='replace'?'Đổi đơn giá':'Ngoài ca'}<br/>{item.basis==='hour'?`${item.minutes/60} giờ × ${money(item.rate)}`:'Trọn việc'}</td><td>{money(item.earned)}</td><td>{money(item.amount)}</td><td style={{whiteSpace:'pre-wrap'}}>{item.note}</td></tr>)}</tbody></table><p>Đổi đơn giá chỉ cộng/trừ phần chênh lệch so với lương thường để không tính trùng.</p></>}
    {entry.isConsolidated&&entry.periods&&<><h3>Chi tiết công nợ từng kỳ</h3><table><thead><tr><th>Kỳ lương</th><th>Tổng lương</th><th>Đã ứng</th><th>Đã trả</th><th>Còn phải trả</th></tr></thead><tbody>{entry.periods.map(row=><tr key={row.period}><td>{row.period}</td><td>{money(row.total)}</td><td>{money(row.advance)}</td><td>{money(row.paid)}</td><td>{money(row.balance)}</td></tr>)}</tbody></table><p>Còn phải trả = tổng lương − các khoản đã ứng − lương đã thanh toán.</p></>}
    {payload&&<section className="pay-slip-transfer" aria-label="Thông tin chuyển khoản">
     <div><strong>Thông tin chuyển khoản</strong>

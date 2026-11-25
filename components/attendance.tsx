@@ -1,4 +1,5 @@
 'use client';
+import DailyWork from './daily-work';
 import {useEffect,useState} from 'react';
 import AttendanceSupplement from './attendance-supplement';
 import AttendanceEvidence,{uploadEvidence} from './attendance-evidence';
@@ -33,6 +34,7 @@ export default function Attendance(){
  <datalist id="lunch-hours">{[0,0.5,1,1.5,2].map(value=><option key={value} value={value}/>)}</datalist>
  {['in','out'].map(action=><button key={action} className="btn" disabled={busy||!name.trim()||!code.trim()} onClick={()=>void run(async()=>{const recorded=await api('/clock',{code,name,action,breakMinutes:Math.round(breakHours*60)});if(files.length){await uploadEvidence(recorded.id,files,file=>setFiles(current=>current.filter(item=>item!==file)));setFiles([]);setFileRevision(value=>value+1)}setMessage('Đã ghi nhận '+(action==='in'?'giờ vào':'giờ ra'))})}>{action==='in'?'Chấm giờ vào':'Chấm giờ ra'}</button>)}
  </form>
+ <DailyWork period={period}/>
  {message&&<p role="status">{message}</p>}
  {!data?<p>Đang tải…</p>:<>
  {data.ownerAdmin&&data.mailConfigured===false&&<p role="status">Thông báo email chưa được kích hoạt. Cần cấu hình địa chỉ gửi mail chung và khóa dịch vụ gửi mail trên máy chủ. Email nhân viên được dùng làm địa chỉ trả lời.</p>}

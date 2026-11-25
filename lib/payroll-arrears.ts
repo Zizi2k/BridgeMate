@@ -22,7 +22,7 @@ export function consolidateArrears(rows:PayrollReportRow[],asOf:string):PayrollR
   const first=periods[0];if(!first)continue;
   const sum=(key:'total'|'advance'|'paid'|'balance'|'hours'|'commission')=>periods.reduce((total,row)=>total+row[key],0);
   if(sum('balance')<=0)continue;
-  result.push({...first,id:'arrears:'+first.id,period:asOf,fromPeriod:first.period,isConsolidated:true,periods:periods.map(row=>({...row,periods:undefined})),total:sum('total'),advance:sum('advance'),paid:sum('paid'),balance:sum('balance'),hours:sum('hours'),commission:sum('commission'),work:'Lương cộng gộp từ '+first.period+' đến '+asOf});
+  result.push({...first,workDetails:periods.flatMap(row=>row.workDetails||[]),id:'arrears:'+first.id,period:asOf,fromPeriod:first.period,isConsolidated:true,periods:periods.map(row=>({...row,periods:undefined})),total:sum('total'),advance:sum('advance'),paid:sum('paid'),balance:sum('balance'),hours:sum('hours'),commission:sum('commission'),work:'Lương cộng gộp từ '+first.period+' đến '+asOf});
  }
  return result;
 }

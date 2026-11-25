@@ -32,6 +32,8 @@ export async function payrollXlsx(input:Record<string,any>[],kind:'ledger'|'slip
  ]});
  const details=rows.flatMap(row=>row.isConsolidated?row.periods||[]:[]);
  if(details.length)sheets.push({name:'Chi_tiet_cong_no',widths:ledger.widths,freeze:3,landscape:true,merges:['A1:J1','A2:J2'],rows:[[cell('CHI TIẾT CÔNG NỢ TỪNG KỲ',1)],[cell(company||'BridgeMate',1)],headers.map(value=>cell(value,2)),...reportRows(details)]});
+ const workDetails=rows.flatMap(row=>(row.workDetails||[]).map(item=>({row,item})));
+ if(workDetails.length)sheets.push({name:'Chi_tiet_cong_viec',widths:[18,28,14,30,22,12,18,18,20,70],freeze:1,landscape:true,rows:[['Mã NV','Họ tên','Ngày','Công việc','Cách tính','Số giờ','Đơn giá','Tiền công việc','Cộng/trừ vào lương','Ghi chú'].map(value=>cell(value,2)),...workDetails.map(({row,item})=>[cell(row.employeeCode),cell(row.worker),cell(item.day),cell(item.title),cell(item.kind==='replace'?'Đổi đơn giá trong ca':'Cộng ngoài ca'),cell(item.minutes/60,4),cell(item.rate,5),cell(item.earned,5),cell(item.amount,5),cell(item.note)])]});
  const zip=new JSZip();
  zip.file('[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`);
  zip.file('_rels/.rels','<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
@@ -73,6 +75,13 @@ export async function payrollPdf(input:Record<string,any>[],kind:'ledger'|'slips
   addPage();
   for(const row of rows){if(y<88)addPage();let x=28;const values=[row.period,row.departmentName,row.employeeCode,row.worker,clock(row.hours),money(row.total),money(row.advance),money(row.paid),money(row.balance)];values.forEach((value,i)=>{page.drawRectangle({x,y:y-38,width:widths[i],height:38,borderWidth:.5,borderColor:grey});text(page,value,x+5,y-14,9,widths[i]-10,2);x+=widths[i]});y-=38}
   if(y<100)addPage();text(page!,'TỔNG LƯƠNG: '+money(rows.reduce((sum,row)=>sum+row.total,0)),28,y-28,12,780,1);text(page!,'Đã ứng: '+money(rows.reduce((sum,row)=>sum+row.advance,0))+' · Đã thanh toán: '+money(rows.reduce((sum,row)=>sum+row.paid,0))+' · Còn phải trả: '+money(rows.reduce((sum,row)=>sum+row.balance,0)),28,y-49,11,780,1);
+ }
+ for(const row of rows){if(!row.workDetails?.length)continue;
+  let page:PDFPage,y=0;const next=()=>{page=doc.addPage([595.28,841.89]);text(page,'CHI TIẾT CÔNG VIỆC VÀ ĐƠN GIÁ RIÊNG',40,795,14,515,1);text(page,row.worker+' · '+row.employeeCode+' · '+row.period,40,766,11,515,2);y=719};next();
+  for(const item of row.workDetails){
+   const content=[item.day+' · '+item.title,(item.kind==='replace'?'Đổi đơn giá trong ca':'Cộng công ngoài ca')+' · '+(item.basis==='hour'?clock(item.minutes/60)+' giờ × '+money(item.rate)+'/giờ':'Trọn công việc: '+money(item.rate)),'Tiền công việc: '+money(item.earned)+' · Phần cộng/trừ vào lương: '+money(item.amount),'Ghi chú: '+item.note];
+   for(const paragraph of content)for(const line of lines(paragraph,font,10,510,100)){if(y<65)next();text(page!,line,42,y,10,510,1);y-=15}y-=18;
+  }
  }
  if(!doc.getPageCount()){const page=doc.addPage();text(page,'Không có phiếu lương phù hợp với bộ lọc đã chọn.',40,780,12)}
  const pages=doc.getPages();pages.forEach((page,index)=>text(page,`BridgeMate · ${index+1}/${pages.length}`,28,22,9,page.getWidth()-56,1));
