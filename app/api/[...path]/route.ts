@@ -1,3 +1,6 @@
+import {canManageDepartment,searchEmployee} from '../../../lib/department-policy';
+import {MAX_EVIDENCE_BYTES,imageFilenameAllowed,evidenceExpiry,evidencePreviewMime} from '../../../lib/attendance-evidence';
+import {purgeAttendancePhotos} from '../../../lib/attendance-photo-cleanup';
 import {localDay,shiftMinutes,netShiftMinutes} from '../../../lib/attendance';
 import {attendancePayroll,closeAttendanceMonths} from '../../../lib/attendance-payroll';
 import {aptisPhotoKey,aptisPhotoSlots} from '../../../lib/aptis-photos';
@@ -17,7 +20,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos} from '../../../db/schema';
 import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -43,8 +46,8 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<(path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
- async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);const [employee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,u.id));return {...publicUser(u),accountRole:accountRole(u)==='admin'?'admin':employee?.manager?'manager':accountRole(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
+ check(JSON.stringify(body).length<(path[0]==='attendance'&&path[2]==='photos'?4300000:path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
+ async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);const [employee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,u.id));const [department]=await db.select({id:departments.id,name:departments.name,status:accountDepartments.status}).from(accountDepartments).innerJoin(departments,and(eq(accountDepartments.departmentId,departments.id),eq(departments.active,1))).where(eq(accountDepartments.userId,u.id));return {...publicUser(u),departmentId:department?.id||'',departmentName:department?.name||'',departmentStatus:department?.status||'',accountRole:accountRole(u)==='admin'?'admin':employee?.manager?'manager':accountRole(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await db.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
  if(path[0]==='auth'){
@@ -86,7 +89,14 @@ async function handle(req:Request){
  }
  const ownerAdmin=accountRole(user)==='admin';
  const [assignment]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id));
- const admin=ownerAdmin||!!assignment?.manager;
+ const admin=ownerAdmin;
+ const [currentDepartment]=await db.select({departmentId:departments.id,status:accountDepartments.status,active:departments.active}).from(accountDepartments).innerJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(eq(accountDepartments.userId,user.id));
+ const departmentContext=currentDepartment?{...currentDepartment,active:!!currentDepartment.active}:null;
+ const departmentManager=!!assignment?.manager&&!!departmentContext?.active&&departmentContext.status==='approved';
+ async function employeeDepartment(id:string){return (await db.select({departmentId:accountDepartments.departmentId}).from(accountDepartments).innerJoin(departments,and(eq(departments.id,accountDepartments.departmentId),eq(departments.active,1))).where(and(eq(accountDepartments.userId,id),eq(accountDepartments.status,'approved'))).limit(1))[0]?.departmentId}
+ async function managesEmployee(id:string){return canManageDepartment(ownerAdmin,departmentManager,departmentContext,await employeeDepartment(id))}
+ async function departmentEmployeeIds(){if(!departmentManager)return [];return (await db.select({userId:accountDepartments.userId}).from(accountDepartments).where(and(eq(accountDepartments.departmentId,currentDepartment.departmentId),eq(accountDepartments.status,'approved')))).map(row=>row.userId)}
+
  const isAptis=path[0]==='aptis'&&path.length===2;
  if(isAptis&&path[1]==='photos'&&method==='GET'){
   const entries=await db.select({id:printSettings.id}).from(printSettings)
@@ -247,7 +257,7 @@ async function handle(req:Request){
  if(path[0]==='access'&&path.length===1){
   if(method==='GET'){
    const rows=await db.select({module:moduleApprovals.module,status:moduleApprovals.status}).from(moduleApprovals).where(eq(moduleApprovals.userId,user.id));
-   return ok({admin:ownerAdmin,manager:admin&&!ownerAdmin,permissions:Object.fromEntries(rows.map(row=>[row.module,row.status]))});
+   return ok({admin:ownerAdmin,manager:false,permissions:Object.fromEntries(rows.map(row=>[row.module,row.status]))});
   }
   if(method==='POST'){
    check(!user.demo,'FORBIDDEN',403);
@@ -304,18 +314,56 @@ async function handle(req:Request){
   }
  }
 
+ if(path[0]==='departments'){
+  check(!user.demo,'FORBIDDEN',403);
+  if(method==='GET')return ok(await db.select().from(departments).where(ownerAdmin?undefined:eq(departments.active,1)).orderBy(departments.name));
+  if(path[1]==='select'&&method==='POST'){
+   check(!currentDepartment||currentDepartment.status==='pending','DEPARTMENT_LOCKED',403);
+   const departmentId=str(body.departmentId,36);
+   const [department]=await db.select().from(departments).where(and(eq(departments.id,departmentId),eq(departments.active,1)));check(department,'DEPARTMENT_REQUIRED');
+   // A conditional update prevents a concurrent admin approval from being overwritten.
+   await db.insert(accountDepartments).values({userId:user.id,departmentId,status:'pending'}).onDuplicateKeyUpdate({set:{departmentId:sql`CASE WHEN ${accountDepartments.status} = 'pending' THEN ${departmentId} ELSE ${accountDepartments.departmentId} END`}});
+   return ok(await userSummary(user));
+  }
+  check(ownerAdmin,'FORBIDDEN',403);
+  if(method==='POST'&&!path[1]){const name=str(body.name,120),id=uid();await db.insert(departments).values({id,name});return ok({id,name,active:1},201)}
+  if(method==='PATCH'&&path[1]){const name=str(body.name,120);check(typeof body.active==='boolean');await db.update(departments).set({name,active:body.active?1:0}).where(eq(departments.id,path[1]));return ok(null)}
+  throw new ApiError('NOT_FOUND',404);
+ }
+ if(path[0]==='department-payroll'&&method==='GET'){
+  check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+  const period=url.searchParams.get('period')||localDay().slice(0,7);check(payPeriodPattern.test(period));
+  const departmentId=ownerAdmin?(url.searchParams.get('departmentId')||''):currentDepartment.departmentId;
+  const memberships=await db.select({userId:accountDepartments.userId,departmentId:accountDepartments.departmentId,departmentName:departments.name}).from(accountDepartments).innerJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(and(eq(accountDepartments.status,'approved'),!ownerAdmin?eq(accountDepartments.departmentId,departmentId):undefined));
+  const departmentNames=await db.select().from(departments);
+  const ids=memberships.map(row=>row.userId);
+  const query=searchEmployee((url.searchParams.get('q')||'').slice(0,120));
+  const rows=await db.select().from(payrollEntries).where(and(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.period')) = ${period}`,like(payrollEntries.scopeId,'team:%'),ownerAdmin?undefined:ids.length?inArray(sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId'))`,ids):sql`false`));
+  const visible:Array<Record<string,any>>=rows.flatMap(row=>{
+   const data=row.data as Record<string,any>,membership=memberships.find(member=>member.userId===data.recipientId);
+   if(!ownerAdmin&&(!membership||data.departmentId&&data.departmentId!==departmentId))return [];
+   const payrollDepartmentId=data.departmentId||membership?.departmentId||'';
+   if(ownerAdmin&&departmentId&&payrollDepartmentId!==departmentId)return [];
+   if(query&&!searchEmployee((data.employeeCode||'')+' '+(data.worker||'')).includes(query))return [];
+   return [{...data,id:row.id,departmentId:payrollDepartmentId,departmentName:departmentNames.find(department=>department.id===payrollDepartmentId)?.name||'Chưa phân phòng ban'}];
+  });
+  const totals:Record<string,{name:string;total:number;hours:number;balance:number}>={};
+  for(const row of visible){const group=totals[row.departmentId]??={name:row.departmentName,total:0,hours:0,balance:0};group.total+=Number(row.total)||0;group.hours+=Number(row.hours)||0;group.balance+=Number(row.balance)||0}
+  const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll'));
+  return ok({rows:visible,totals:Object.values(totals),template:{...printDefaults,...template?.data as object}});
+ }
  if(path[0]==='admin'){
   check(admin,'FORBIDDEN',403);
   if(path[1]==='accounts'&&path.length===2&&method==='GET'){
    const page=Number(url.searchParams.get('page')||1);
    check(Number.isSafeInteger(page)&&page>=1&&page<=10000);
-   const rows=await db.select({id:users.id,name:users.name,email:users.email,demo:users.demo,suspended:accountAccess.suspended,employeeCode:employeeAssignments.code,employeeName:employeeAssignments.name,rate:employeeAssignments.rate,manager:employeeAssignments.manager})
-    .from(users).leftJoin(employeeAssignments,eq(users.id,employeeAssignments.userId)).leftJoin(accountAccess,eq(users.id,accountAccess.userId))
+   const rows=await db.select({id:users.id,name:users.name,email:users.email,demo:users.demo,suspended:accountAccess.suspended,employeeCode:employeeAssignments.code,employeeName:employeeAssignments.name,rate:employeeAssignments.rate,manager:employeeAssignments.manager,departmentId:accountDepartments.departmentId,departmentStatus:accountDepartments.status})
+    .from(users).leftJoin(accountDepartments,eq(users.id,accountDepartments.userId)).leftJoin(employeeAssignments,eq(users.id,employeeAssignments.userId)).leftJoin(accountAccess,eq(users.id,accountAccess.userId))
     .leftJoin(removedAccounts,eq(users.id,removedAccounts.userId))
     .where(and(eq(users.demo,0),isNull(removedAccounts.userId))).orderBy(users.email).limit(26).offset((page-1)*25);
    const visible=rows.slice(0,25);
    const permissions=visible.length?await db.select().from(moduleApprovals).where(inArray(moduleApprovals.userId,visible.map(row=>row.id))):[];
-   return ok({rows:visible.map(row=>({...publicUser(row),accountRole:accountRole(row)==='admin'?'admin':row.manager?'manager':'member',employeeCode:row.employeeCode,employeeName:row.employeeName,rate:row.rate,suspended:!!row.suspended,permissions:Object.fromEntries(
+   return ok({rows:visible.map(row=>({...publicUser(row),accountRole:accountRole(row)==='admin'?'admin':row.manager?'manager':'member',employeeCode:row.employeeCode,employeeName:row.employeeName,rate:row.rate,departmentId:row.departmentId,departmentStatus:row.departmentStatus,suspended:!!row.suspended,permissions:Object.fromEntries(
     permissions.filter(item=>item.userId===row.id).map(item=>[item.module,item.status]))})),hasMore:rows.length>25});
   }
   if(path[1]==='accounts'&&path.length===3&&(method==='PATCH'||method==='DELETE')){
@@ -328,8 +376,19 @@ async function handle(req:Request){
     check(ownerAdmin,'FORBIDDEN',403);
     const code=normalizeEmployeeCode(str(body.employeeCode,32)),name=str(body.employeeName,120);
     check(employeeCodePattern.test(code)&&Number.isSafeInteger(body.rate)&&body.rate>=0&&body.rate<=1e9&&typeof body.manager==='boolean');
+    const departmentId=typeof body.departmentId==='string'?body.departmentId:'';
+    check(!body.manager||departmentId,'DEPARTMENT_REQUIRED');
+    if(departmentId){const [department]=await db.select().from(departments).where(and(eq(departments.id,departmentId),eq(departments.active,1)));check(department,'DEPARTMENT_REQUIRED')}
     const data={code,name,rate:body.rate,manager:body.manager?1:0};
-    await db.insert(employeeAssignments).values({userId:target.id,...data}).onDuplicateKeyUpdate({set:data});
+    await db.transaction(async tx=>{
+     const [existing]=await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,target.id)).for('update');
+     const [duplicate]=await tx.select().from(employeeAssignments).where(eq(employeeAssignments.code,code));
+     check(!duplicate||duplicate.userId===target.id,'EMPLOYEE_CODE_EXISTS',409);
+     if(existing)await tx.update(employeeAssignments).set(data).where(eq(employeeAssignments.userId,target.id));
+     else await tx.insert(employeeAssignments).values({userId:target.id,...data});
+     if(departmentId)await tx.insert(accountDepartments).values({userId:target.id,departmentId,status:'approved'}).onDuplicateKeyUpdate({set:{departmentId,status:'approved'}});
+     else await tx.delete(accountDepartments).where(eq(accountDepartments.userId,target.id));
+    });
     return ok(null);
    }
    if('module' in body)check(ownerAdmin||body.module!=='links','FORBIDDEN',403);
@@ -386,17 +445,21 @@ async function handle(req:Request){
   check(!user.demo,'FORBIDDEN',403);
   const period=url.searchParams.get('period')||localDay().slice(0,7);
   check(payPeriodPattern.test(period));
-  if(method==='GET'){
+  if(method==='GET'&&!path[1]){
+   await purgeAttendancePhotos();
    await closeAttendanceMonths();
-   const rows=await db.select().from(attendanceEntries).where(admin?undefined:eq(attendanceEntries.userId,user.id));
-   const employees=await db.select().from(employeeAssignments).where(admin?undefined:eq(employeeAssignments.userId,user.id));
-   return ok({rows:rows.filter(row=>row.day.startsWith(period)),employees,admin,ownerAdmin,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
+   const permitted=departmentManager?await departmentEmployeeIds():[user.id];
+   const ids=permitted.length?permitted:[user.id];
+   const rows=await db.select().from(attendanceEntries).where(ownerAdmin?undefined:inArray(attendanceEntries.userId,ids));
+   const employees=await db.select().from(employeeAssignments).where(ownerAdmin?undefined:inArray(employeeAssignments.userId,ids));
+   return ok({rows:rows.filter(row=>row.day.startsWith(period)),employees,currentUserId:user.id,admin:ownerAdmin||departmentManager,ownerAdmin,departmentName:currentDepartment?((await db.select().from(departments).where(eq(departments.id,currentDepartment.departmentId)))[0]?.name):null,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
   }
   if(path[1]==='preview'||path[1]==='sync'){
-   check(admin,'FORBIDDEN',403);check(method==='POST');
-   return ok(await attendancePayroll(period,path[1]==='sync'));
+   check(ownerAdmin||departmentManager,'FORBIDDEN',403);check(method==='POST');
+   return ok(await attendancePayroll(period,path[1]==='sync',false,ownerAdmin?undefined:currentDepartment.departmentId));
   }
   if(path[1]==='clock'&&method==='POST'){
+   check(ownerAdmin||currentDepartment?.active&&currentDepartment.status==='approved','DEPARTMENT_REQUIRED',403);
    check(assignment&&normalizeEmployeeCode(str(body.code,32))===assignment.code&&str(body.name,120).normalize('NFC')===assignment.name.normalize('NFC'),'EMPLOYEE_MISMATCH',403);
    check(body.action==='in'||body.action==='out');
    return db.transaction(async tx=>{
@@ -413,14 +476,38 @@ async function handle(req:Request){
      check(breakMinutes<=shiftMinutes(opened.start,time),'INVALID_BREAK');
      await tx.update(attendanceEntries).set({end:time,breakMinutes,updatedBy:user.id,updatedAt:time}).where(eq(attendanceEntries.id,opened.id));
     }
-    return ok(null);
+    return ok({id:opened?.id||(await tx.select({id:attendanceEntries.id}).from(attendanceEntries).where(and(eq(attendanceEntries.userId,user.id),eq(attendanceEntries.day,localDay()))))[0]?.id});
    });
+  }
+  if(path[1]&&path[2]==='photos'){
+   await purgeAttendancePhotos();
+   const [entry]=await db.select().from(attendanceEntries).where(eq(attendanceEntries.id,path[1]));check(entry,'NOT_FOUND',404);
+   const owns=entry.userId===user.id;
+   check(owns||await managesEmployee(entry.userId),'FORBIDDEN',403);
+   if(method==='GET'&&path[3]){
+    const [photo]=await db.select().from(attendancePhotos).where(and(eq(attendancePhotos.id,path[3]),eq(attendancePhotos.entryId,entry.id),gt(attendancePhotos.expiresAt,now())));check(photo,'NOT_FOUND',404);
+    const bytes=Buffer.from(photo.data,'base64'),preview=evidencePreviewMime(bytes);
+    return new Response(bytes,{headers:{'Content-Type':preview||'application/octet-stream','Content-Disposition':`${preview?'inline':'attachment'}; filename*=UTF-8''${encodeURIComponent(photo.name)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox"}});
+   }
+   if(method==='GET')return ok(await db.select({id:attendancePhotos.id,name:attendancePhotos.name,createdAt:attendancePhotos.createdAt,expiresAt:attendancePhotos.expiresAt}).from(attendancePhotos).where(and(eq(attendancePhotos.entryId,entry.id),gt(attendancePhotos.expiresAt,now()))));
+   if(method==='POST'&&!path[3]){
+    check(owns||await managesEmployee(entry.userId),'FORBIDDEN',403);
+    check(owns?(!entry.end||Date.now()-Date.parse(entry.end)<15*60000||!!entry.editable):true,'FORBIDDEN',403);
+    const name=str(body.name,180).replace(/[\\/\r\n]/g,'_'),mime=typeof body.mime==='string'?body.mime.slice(0,120):'';
+    check(imageFilenameAllowed(name,mime),'IMAGE_FORMAT');
+    const data=str(body.data,MAX_EVIDENCE_BYTES*4/3+4);check(/^[A-Za-z0-9+/]+={0,2}$/.test(data),'IMAGE_FORMAT');
+    const bytes=Buffer.from(data,'base64');check(bytes.length>0&&bytes.length<=MAX_EVIDENCE_BYTES,'IMAGE_TOO_LARGE');
+    const id=uid(),createdAt=now(),expiresAt=evidenceExpiry(createdAt);
+    await db.transaction(async tx=>{await tx.select({id:attendanceEntries.id}).from(attendanceEntries).where(eq(attendanceEntries.id,entry.id)).for('update');const existing=await tx.select({id:attendancePhotos.id}).from(attendancePhotos).where(eq(attendancePhotos.entryId,entry.id));check(existing.length<10,'PHOTO_LIMIT');await tx.insert(attendancePhotos).values({id,entryId:entry.id,name,mime,data,createdAt,expiresAt})});
+    return ok({id,name,createdAt,expiresAt},201);
+   }
+   throw new ApiError('NOT_FOUND',404);
   }
   if(path[1]&&method==='PATCH')return db.transaction(async tx=>{
    const [row]=await tx.select().from(attendanceEntries).where(eq(attendanceEntries.id,path[1])).for('update');
-   check(row,'NOT_FOUND',404);check(admin||row.userId===user.id&&!!row.editable,'FORBIDDEN',403);
+   check(row,'NOT_FOUND',404);check(await managesEmployee(row.userId)||row.userId===user.id&&!!row.editable,'FORBIDDEN',403);
    if(typeof body.editable==='boolean'){
-    check(admin,'FORBIDDEN',403);
+    check(await managesEmployee(row.userId),'FORBIDDEN',403);
     await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{action:'edit-permission',editable:body.editable},createdAt:now()});
     await tx.update(attendanceEntries).set({editable:body.editable?1:0}).where(eq(attendanceEntries.id,row.id));
    }else{
@@ -441,10 +528,7 @@ async function handle(req:Request){
   check(scope&&extra.length===0,'NOT_FOUND',404);
   check(!user.demo,'FORBIDDEN',403);
   check(await approved(scope==='me'?'payroll-personal':'payroll-team'),'APPROVAL_REQUIRED',403);
-  if(scope!=='me'){
-   const team=await teamAccess(scope);
-   check(team.ownerId===user.id||team.leaderId===user.id,'FORBIDDEN',403);
-  }
+  if(scope!=='me'){check(ownerAdmin,'FORBIDDEN',403);const [team]=await db.select().from(teams).where(and(eq(teams.id,scope),eq(teams.deleted,0)));check(team,'NOT_FOUND',404)}
   const scopeId=scope==='me'?'user:'+user.id:'team:'+scope;
   const owned=eq(payrollEntries.scopeId,scopeId);
   if(method==='GET'&&!entryId){
@@ -458,7 +542,7 @@ async function handle(req:Request){
      .where(and(eq(members.teamId,scope),eq(members.userId,data.recipientId),eq(users.demo,0))).limit(1);
     check(recipient&&!await removed(data.recipientId),'ASSIGNEE_NOT_MEMBER',400);
    }
-   return data;
+   return {...data,departmentId:data.recipientId?await employeeDepartment(data.recipientId)||'':''};
   }
   if(method==='POST'&&!entryId){
    const data=await validatedPayroll();
@@ -694,5 +778,5 @@ async function handle(req:Request){
  }
  throw new ApiError('NOT_FOUND',404);
 }
-async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof TeamworkError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof PracticeError)return Response.json({error:{code:e.code,detail:e.detail}},{status:400});if(e instanceof PhraseError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.message:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
+async function safe(req:Request){try{return await handle(req)}catch(e){if(e instanceof TeamworkError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof PracticeError)return Response.json({error:{code:e.code,detail:e.detail}},{status:400});if(e instanceof PhraseError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof ProfileError)return Response.json({error:{code:e.code}},{status:400});if(e instanceof AIError)return Response.json({error:{code:e.code}},{status:e.status});if(e instanceof ApiError)return Response.json({error:{code:e.code}},{status:e.status});console.error('BridgeMate API error',e instanceof Error?e.name:'unknown');let cause:unknown=e;for(let depth=0;depth<4&&cause&&typeof cause==='object';depth++){const detail=cause as {code?:unknown;sqlState?:unknown;cause?:unknown;message?:unknown};if(detail.code==='HANDSHAKE_SSL_ERROR'){const text=typeof detail.message==='string'?detail.message.toLowerCase():'';const reason=text.includes('self-signed')||text.includes('self signed')?'SELF_SIGNED_CERTIFICATE':text.includes('does not support secure')?'SERVER_TLS_UNSUPPORTED':text.includes('expired')?'CERTIFICATE_EXPIRED':text.includes('unable to verify')||text.includes('unable to get local issuer')?'UNTRUSTED_CERTIFICATE_CHAIN':text.includes('hostname')||text.includes('altnames')?'CERTIFICATE_HOSTNAME_MISMATCH':'TLS_NEGOTIATION_FAILED';console.error('BridgeMate TLS diagnosis',{reason});}if(typeof detail.code==='string')console.error('BridgeMate dependency error',{code:detail.code,sqlState:typeof detail.sqlState==='string'?detail.sqlState:undefined});cause=detail.cause;}return Response.json({error:{code:'SERVER_ERROR'}},{status:500})}}
 export const GET=safe;export const POST=safe;export const PATCH=safe;export const DELETE=safe;

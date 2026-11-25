@@ -69,3 +69,16 @@ export const attendanceAudit=mysqlTable('attendance_audit',{
  id:id().primaryKey(),entryId:id('entry_id').notNull(),actorId:id('actor_id').notNull(),
  data:json('data').notNull(),createdAt:iso('created_at').notNull(),
 });
+
+export const departments=mysqlTable('departments',{
+ id:id().primaryKey(),name:varchar('name',{length:120}).notNull().unique(),active:int('active').notNull().default(1),
+});
+export const accountDepartments=mysqlTable('account_departments',{
+ userId:id('user_id').primaryKey().references(()=>users.id),departmentId:id('department_id').notNull().references(()=>departments.id),
+ status:varchar('status',{length:12}).notNull(),
+},t=>[index('account_department_idx').on(t.departmentId,t.status)]);
+export const attendancePhotos=mysqlTable('attendance_photos',{
+ id:id().primaryKey(),entryId:id('entry_id').notNull().references(()=>attendanceEntries.id,{onDelete:'cascade'}),
+ name:varchar('name',{length:180}).notNull(),mime:varchar('mime',{length:120}).notNull(),data:mediumtext('data').notNull(),
+ createdAt:iso('created_at').notNull(),expiresAt:iso('expires_at').notNull(),
+},t=>[index('attendance_photos_expiry').on(t.expiresAt),index('attendance_photos_entry').on(t.entryId)]);

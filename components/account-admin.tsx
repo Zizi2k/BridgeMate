@@ -1,12 +1,13 @@
 'use client';
 
 import {useEffect,useState} from 'react';
+import {DepartmentAdmin,departmentRequest,type Department} from './departments';
 
 import {modules,moduleLabels,type Module,type Permission} from '../lib/module-access';
 import {AptisBank} from './aptis';
 import {PrintTemplateEditor} from './print-payroll';
 
-type Account={id:string;name:string;email:string;accountRole:'admin'|'manager'|'member';employeeCode?:string;employeeName?:string;rate?:number;suspended:boolean;permissions:Partial<Record<Module,Permission>>};
+type Account={id:string;name:string;email:string;accountRole:'admin'|'manager'|'member';employeeCode?:string;employeeName?:string;rate?:number;departmentId?:string;departmentStatus?:string;suspended:boolean;permissions:Partial<Record<Module,Permission>>};
 
 async function request(path:string, body?:object,method='PATCH'){
  const response=await fetch('/api/admin/accounts'+path,body?{
@@ -49,6 +50,9 @@ function ModuleVisibility({lang}:{lang:string}){
 
 export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerAdmin?:boolean}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
+ const [departments,setDepartments]=useState<Department[]>([]);
+ async function loadDepartments(){setDepartments(await departmentRequest('departments'))}
+ useEffect(()=>{loadDepartments().catch(()=>setError(true))},[]);
  const [page,setPage]=useState(1),[rows,setRows]=useState<Account[]>([]),[hasMore,setHasMore]=useState(false);
  const [loading,setLoading]=useState(true),[busy,setBusy]=useState(''),[error,setError]=useState(false);
  useEffect(()=>{
@@ -86,6 +90,7 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
  return <section>
   <div className="page-heading"><div><h1>{t('Account administration','Quản trị tài khoản')}</h1></div></div>
   {ownerAdmin&&<ModuleVisibility lang={lang}/>}
+  {ownerAdmin&&<DepartmentAdmin departments={departments} onChanged={loadDepartments}/>}
   <PrintTemplateEditor/>
   <AptisBank lang={lang}/>
   {error&&<p role="alert">{t('Could not complete the request. Reload and try again.','Không thể thực hiện thao tác. Tải lại trang và thử lại.')}</p>}
@@ -93,7 +98,7 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
    <div className="members-grid">{rows.map(account=><article className="member-card" key={account.id}>
     <h3>{account.name}</h3><p style={{overflowWrap:'anywhere'}}>{account.email}</p>
     <p>{account.accountRole==='admin'?t('Administrator','Quản trị viên'):account.accountRole==='manager'?t('Manager','Người quản lý'):t('Member','Thành viên')} · {account.suspended?t('Suspended','Đã khóa'):t('Active','Đang hoạt động')}</p>
-    {ownerAdmin&&account.accountRole!=='admin'&&<EmployeeSetup account={account} saved={updated=>setRows(rows=>rows.map(row=>row.id===account.id?{...row,...updated}:row))}/>}
+    {ownerAdmin&&account.accountRole!=='admin'&&<EmployeeSetup account={account} departments={departments} saved={updated=>setRows(rows=>rows.map(row=>row.id===account.id?{...row,...updated}:row))}/>}
     {account.accountRole!=='admin'&&modules.filter(module=>ownerAdmin||module!=='links').map(module=><div key={module}>
      <strong>{moduleLabels[module][lang==='vi'?1:0]}</strong>
      <p>{account.permissions[module]==='pending'?t('Pending','Chờ duyệt'):account.permissions[module]==='approved'?t('Approved','Đã cấp'):t('No access','Chưa cấp')}</p>
@@ -111,13 +116,16 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
  </section>;
 }
 
-function EmployeeSetup({account,saved}:{account:Account;saved:(value:Partial<Account>)=>void}){
+function EmployeeSetup({account,departments,saved}:{account:Account;departments:Department[];saved:(value:Partial<Account>)=>void}){
+ const [departmentId,setDepartmentId]=useState(account.departmentId||'');
  const [code,setCode]=useState(account.employeeCode||''),[name,setName]=useState(account.employeeName||account.name),[rate,setRate]=useState(account.rate||0),[manager,setManager]=useState(account.accountRole==='manager'),[status,setStatus]=useState('');
- return <form onSubmit={async e=>{e.preventDefault();try{await request('/'+account.id,{employeeCode:code,employeeName:name,rate,manager});saved({employeeCode:code,employeeName:name,rate,accountRole:manager?'manager':'member'});setStatus('Đã lưu')}catch{setStatus('Không lưu được. Kiểm tra mã nhân viên có trùng không.')}}}>
+ return <form onSubmit={async e=>{e.preventDefault();try{await request('/'+account.id,{employeeCode:code,employeeName:name,rate,manager,departmentId});saved({departmentId,departmentStatus:'approved',employeeCode:code,employeeName:name,rate,accountRole:manager?'manager':'member'});setStatus('Đã lưu')}catch{setStatus('Không lưu được. Kiểm tra mã nhân viên có trùng không.')}}}>
  <h4>Thông tin nhân viên và quyền quản lý</h4>
+ <p>{account.departmentStatus==='pending'?'Đang chờ admin xác nhận phòng ban.':''}</p>
+ <label>Phòng ban <select value={departmentId} required={manager} onChange={e=>setDepartmentId(e.target.value)}><option value="">Chưa phân phòng ban</option>{departments.filter(row=>row.active||row.id===departmentId).map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
  <label>Mã nhân viên <input required maxLength={32} value={code} onChange={e=>setCode(e.target.value.toUpperCase())}/></label>
  <label>Tên nhân viên <input required maxLength={120} value={name} onChange={e=>setName(e.target.value)}/></label>
  <label>Lương mỗi giờ (đ) <input required type="number" min={0} max={1000000000} value={rate} onChange={e=>setRate(Number(e.target.value))}/></label>
- <label><input type="checkbox" checked={manager} onChange={e=>setManager(e.target.checked)}/> Người quản lý</label><button className="btn primary">{manager?'Lưu và cấp quyền quản lý':'Lưu thông tin và quyền nhân viên'}</button><p role="status">{status}</p>
+ <label><input type="checkbox" checked={manager} onChange={e=>setManager(e.target.checked)}/> Người quản lý</label><button className="btn primary">{manager?'Duyệt phòng ban và cấp quyền quản lý':account.departmentStatus==='pending'?'Lưu và duyệt phòng ban':'Lưu thông tin và phòng ban'}</button><p role="status">{status}</p>
  </form>;
 }
