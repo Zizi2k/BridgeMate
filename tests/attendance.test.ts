@@ -31,3 +31,9 @@ test('allocates a lunch deduction across month boundaries exactly once',()=>{
  assert.equal(november,45);assert.equal(december,90);assert.equal(november+december,135);
  assert.equal(monthMinutes('2026-11-30',start,end,'2026-10',45),0);
 });
+
+test('a sub-minute shift produces zero payable minutes',()=>{
+ const start='2026-11-01T08:00:00+07:00',end='2026-11-01T08:00:30+07:00';
+ assert.equal(netShiftMinutes(start,end,0),0);
+ assert.equal(monthMinutes('2026-11-01',start,end,'2026-11',0),0);
+});

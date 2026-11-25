@@ -11,6 +11,7 @@ export function netShiftMinutes(start:string,end:string,breakMinutes=0){
 }
 export function monthMinutes(day:string,start:string,end:string,period:string,breakMinutes=0){
  const gross=shiftMinutes(start,end),net=netShiftMinutes(start,end,breakMinutes);
+ if(gross===0)return 0;
  const [year,month]=period.split('-').map(Number);
  const from=Date.parse(`${period}-01T00:00:00+07:00`);
  const to=Date.UTC(year,month,1)-7*3600000;
