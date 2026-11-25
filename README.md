@@ -180,3 +180,13 @@ Quản trị viên sửa thông tin công ty và nhãn trường tại **Mẫu i
 ### Tra tên chủ tài khoản trên phiếu lương
 
 Cấu hình `VIETQR_CLIENT_ID` và `VIETQR_API_KEY` từ My VietQR ở máy chủ xử lý API (Render nếu đang dùng Vercel rewrite sang Render). Triển khai lại sau khi lưu biến môi trường. Người có quyền bảng lương có thể bấm **Tra tên chủ tài khoản** để gửi mã BIN và số tài khoản tới VietQR. Kết quả xác minh xuất hiện cạnh QR và trên phiếu in.
+
+### Chấm công và lương tháng
+
+- Chạy migration `0013_attendance.sql` bằng `npm run db:migrate` trước khi khởi động phiên bản mới.
+- Admin mở **Quản trị tài khoản**, cấp mã nhân viên duy nhất, tên, đơn giá giờ và vai trò **Người quản lý**. Chỉ admin được cấp vai trò và quyền Kho liên kết.
+- Trong **Chấm công**, nhân viên nhập mã và tên đã cấp để ghi nhận giờ vào/ra từ máy chủ theo giờ Việt Nam. Mỗi ngày có một ca; ca qua đêm được đóng bằng nút giờ ra. Ca thiếu giờ ra không được đưa vào lương.
+- Admin và quản lý xem bảng tháng, sửa giờ với lý do, hoặc mở quyền sửa một lần cho nhân viên. Lịch sử trước/sau được lưu tại `attendance_audit`.
+- **Xem trước tổng giờ vào lương** rồi **Cập nhật giờ vào phiếu lương** cập nhật cùng một phiếu tháng, không cộng trùng. Nhân viên tra cứu tại **Phiếu lương của tôi** bằng mã nhân viên.
+- Thiết lập `CRON_SECRET` trên Vercel để bật lịch tổng hợp mỗi ngày lúc 01:00 giờ Việt Nam (18:00 UTC). Với Render, cấu hình scheduler gọi `GET /api/cron/attendance` kèm header `Authorization: Bearer <CRON_SECRET>`. Chỉ các tháng đã kết thúc được tổng hợp tự động; xem Chấm công/tra cứu phiếu cũng đối soát các tháng chưa tổng hợp. Ca qua giao tháng chia giờ theo từng tháng; sửa ca cũ được cập nhật ở lần đối soát kế tiếp. Đơn giá của phiếu đã tự tổng hợp được giữ khi đối soát tự động; tổng hợp thủ công sử dụng đơn giá đang cấu hình.
+- Giờ công hiện tính toàn bộ khoảng vào–ra, chưa tự trừ nghỉ trưa. Không thay thế các phiếu lương đã nhập tay.

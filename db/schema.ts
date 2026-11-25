@@ -52,3 +52,19 @@ export const aptisChallenges=mysqlTable('aptis_challenges',{
  sessionId:varchar('session_id',{length:64}).primaryKey().references(()=>sessions.id,{onDelete:'cascade'}),
  data:json('data').notNull(),
 });
+
+export const employeeAssignments=mysqlTable('employee_assignments',{
+ userId:id('user_id').primaryKey().references(()=>users.id),
+ code:varchar('code',{length:32}).notNull().unique(),name:varchar('name',{length:120}).notNull(),
+ rate:bigint('rate',{mode:'number'}).notNull().default(0),manager:int('manager').notNull().default(0),
+});
+export const attendanceEntries=mysqlTable('attendance_entries',{
+ id:id().primaryKey(),userId:id('user_id').notNull().references(()=>users.id),
+ day:varchar('day',{length:10}).notNull(),start:iso('start').notNull(),end:iso('end'),
+ editable:int('editable').notNull().default(0),reason:text('reason').notNull(),
+ updatedBy:id('updated_by').notNull(),updatedAt:iso('updated_at').notNull(),
+},t=>[uniqueIndex('attendance_user_day').on(t.userId,t.day)]);
+export const attendanceAudit=mysqlTable('attendance_audit',{
+ id:id().primaryKey(),entryId:id('entry_id').notNull(),actorId:id('actor_id').notNull(),
+ data:json('data').notNull(),createdAt:iso('created_at').notNull(),
+});
