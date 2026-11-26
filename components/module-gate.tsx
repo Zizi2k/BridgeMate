@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import {useEffect,useState,type ReactNode} from 'react';
 import {moduleLabels,type Module,type Permission} from '../lib/module-access';
 
@@ -10,7 +11,7 @@ export default function ModuleGate({module,lang,children}:{module:Module;lang:st
  useEffect(()=>{
   let active=true;
   setStatus('loading');
-  fetch('/api/access',{cache:'no-store'}).then(async response=>{
+  actionFetch('/api/access',{cache:'no-store'}).then(async response=>{
    if(!response.ok)throw Error();
    const {data}=await response.json();
    if(active)setStatus((data.admin||data.allowed?.[module])?'approved':data.permissions[module]||'required');
@@ -20,7 +21,7 @@ export default function ModuleGate({module,lang,children}:{module:Module;lang:st
  async function apply(){
   setBusy(true);
   try{
-   const response=await fetch('/api/access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({module})});
+   const response=await actionFetch('/api/access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({module})});
    if(!response.ok)throw Error();
    setStatus('pending');
   }catch{setStatus('error')}finally{setBusy(false)}

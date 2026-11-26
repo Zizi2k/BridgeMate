@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import ModuleGate from './module-gate';
 import PrintPayroll from './print-payroll';
 import {useEffect,useState,type FormEvent} from 'react';
@@ -7,7 +8,7 @@ import styles from './payroll.module.css';
 
 type Entry=NonNullable<ReturnType<typeof payrollData>> & {id:string};
 async function request(scope:string,id='',method='GET',data?:object){
- const response=await fetch('/api/payroll/'+encodeURIComponent(scope)+(id?'/'+encodeURIComponent(id):''),{
+ const response=await actionFetch('/api/payroll/'+encodeURIComponent(scope)+(id?'/'+encodeURIComponent(id):''),{
   method,cache:'no-store',...(data&&{headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),
  });
  if(response.status===401)window.dispatchEvent(new Event('bm-session-expired'));

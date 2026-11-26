@@ -1,8 +1,9 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import {useEffect,useState} from 'react';
 import {Pencil,Trash2,RotateCcw} from 'lucide-react';
 type Team={id:string;name:string;description:string;website?:string};
-async function send(path:string,method:string,body?:unknown){const r=await fetch('/api/teams'+path,{method,cache:'no-store',headers:method==='GET'?{}:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const j=await r.json();if(!r.ok)throw Error(j.error?.code||'SERVER_ERROR');return j.data}
+async function send(path:string,method:string,body?:unknown){const r=await actionFetch('/api/teams'+path,{method,cache:'no-store',headers:method==='GET'?{}:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const j=await r.json();if(!r.ok)throw Error(j.error?.code||'SERVER_ERROR');return j.data}
 function message(code:string,vi:boolean){const texts:Record<string,[string,string]>={WEBSITE_INVALID:['Enter a valid HTTP or HTTPS website without credentials.','Nhập link website HTTP/HTTPS hợp lệ, không kèm thông tin đăng nhập.'],FORBIDDEN:['Only the team creator can do this.','Chỉ người tạo team mới có quyền thực hiện.'],TEAM_CONFIRMATION:['The team name does not match. Refresh and try again.','Tên team xác nhận chưa khớp. Hãy tải lại và thử lại.'],VALIDATION:['Enter a name of 1–80 characters and a description of at most 500 characters.','Nhập tên từ 1–80 ký tự và mô tả tối đa 500 ký tự.']};return (texts[code]||['Could not save. Refresh and try again.','Chưa lưu được. Hãy tải lại và thử lại.'])[vi?1:0]}
 export default function TeamSettings({team,lang,onSaved,onDeleted}:{team:Team;lang:string;onSaved:()=>Promise<void>;onDeleted:()=>Promise<void>}){
  const vi=lang==='vi',t=(en:string,v:string)=>vi?v:en;

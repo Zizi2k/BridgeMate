@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import {vietQrBanks} from '../lib/vietqr-banks';
 import {payrollQr} from '../lib/payroll-qr';
 import {useEffect,useState,type FormEvent} from 'react';
@@ -9,7 +10,7 @@ const keys=Object.keys(printDefaults) as Array<keyof PrintTemplate>;
 const headings:Partial<Record<keyof PrintTemplate,string>>={company:'Công ty',address:'Địa chỉ',salaryTitle:'Tiêu đề phiếu lương',advanceTitle:'Tiêu đề phiếu tạm ứng'};
 
 async function settings(data?:PrintTemplate):Promise<PrintTemplate>{
- const response=await fetch('/api/payroll-template',data?{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{cache:'no-store'});
+ const response=await actionFetch('/api/payroll-template',data?{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{cache:'no-store'});
  if(!response.ok)throw Error();
  return (await response.json()).data;
 }
@@ -64,7 +65,7 @@ export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{e
   if(!selectedBank?.lookupSupported||!/^\d{4,19}$/.test(receiverAccount))return;
   setLookupBusy(true);setLookup(null);setOwner(null);
   try{
-   const response=await fetch('/api/payroll-bank-lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bin,accountNumber:receiverAccount})});
+   const response=await actionFetch('/api/payroll-bank-lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bin,accountNumber:receiverAccount})});
    const data=await response.json();
    if(!response.ok){
     const code=data.error?.code;

@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import AttendanceDialog from './attendance-dialog';
 import EmployeePicker from './employee-picker';
 import AttendancePhotoPicker from './attendance-photo-picker';
@@ -12,7 +13,7 @@ import {currentClockLocation} from '../lib/browser-location';
 import {monthMinutes} from '../lib/attendance';
 const month=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit'}).format(new Date()).slice(0,7);
 async function api(path:string,body?:object,method='POST'){
- const res=await fetch('/api/attendance'+path,body?{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});
+ const res=await actionFetch('/api/attendance'+path,body?{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});
  const json=await res.json();if(!res.ok){const code=typeof json.error==='string'?json.error:json.error?.code;const messages:Record<string,string>={WORK_LABEL_REQUIRED:'Nhập tên công việc khi chấm công khác/ngoài giờ.',ACTIVE_SHIFT_KIND:'Hãy chấm ra ca đang mở trước khi bắt đầu công việc khác.',INVALID_ATTENDANCE_KIND:'Chọn loại chấm công hợp lệ.',LOCATION_REQUIRED:'Cần lấy vị trí hiện tại. Bật quyền định vị và thử lại.',PHOTO_REQUIRED:'Cần chọn ảnh minh chứng hợp lệ, tối đa 3 MB, cho lần chấm công này.',PHOTO_LIMIT:'Ca đã đủ ảnh. Ca đang mở cần dành một chỗ cho ảnh chấm ra; liên hệ admin nếu dữ liệu cũ đã đủ 10 ảnh.',EMPLOYEE_MISMATCH:'Mã hoặc tên nhân viên không đúng thông tin admin cấp.',ALREADY_CLOCKED:'Cần chấm ra ca đang mở trước. Ca thường chỉ một lần mỗi ngày; làm thêm ca khác hãy chọn Chấm công khác / ngoài giờ.',NO_OPEN_SHIFT:'Bạn chưa có ca đang làm.',DEPARTMENT_REQUIRED:'Bạn cần được admin xác nhận phòng ban trước khi chấm công.',ATTENDANCE_OVERLAP:'Khoảng giờ này chồng với ca làm đã có. Hãy kiểm tra lại giờ vào và giờ ra.',ATTENDANCE_EXISTS:'Nhân viên đã có chấm công trong ngày này. Hãy sửa bản ghi hiện có nếu cần.',INVALID_PAST_ATTENDANCE:'Chọn ngày trước hôm nay và giờ vào/ra hợp lệ, không nằm trong tương lai.',EMPLOYEE_NOT_ASSIGNED:'Nhân viên chưa có mã hoặc thông tin do admin cấp.',INVALID_BREAK:'Giờ nghỉ trưa phải từ 0 đến thời lượng của ca làm.',INVALID_SHIFT:'Giờ ra phải sau giờ vào và ca không quá 24 giờ.',FORBIDDEN:'Bạn chưa được cấp quyền thực hiện thao tác này.',VALIDATION:'Thông tin chưa hợp lệ. Hãy kiểm tra lại.'};throw Error(messages[code]||'Không thực hiện được. Vui lòng thử lại.');}return json.data;
 }
 const time=(value:string|null)=>value?new Date(value).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'}):'Chưa ra';

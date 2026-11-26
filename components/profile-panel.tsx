@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 
 import {useEffect,useRef,useState,type ChangeEvent,type FormEvent} from 'react';
 import {Camera,Check,ExternalLink,Heart,Loader2,Plus,Quote,Trash2,Upload,UserRound,X} from 'lucide-react';
@@ -7,7 +8,7 @@ type Profile={id:string;name:string;bio:string;interests:string[];slogan:string;
 const platforms=['Facebook','Instagram','LinkedIn','GitHub','TikTok','YouTube','X','Website'];
 const empty:Profile={id:'',name:'',bio:'',interests:[],slogan:'',socials:[],avatar:'',updatedAt:null};
 async function api(path:string,method='GET',body?:unknown){
- const r=await fetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',headers:method==='GET'?{}:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+ const r=await actionFetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',headers:method==='GET'?{}:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
  const data=await r.json();if(!r.ok)throw new Error(data.error?.code||'SERVER_ERROR');return data.data;
 }
 async function prepareAvatar(file:File):Promise<string>{

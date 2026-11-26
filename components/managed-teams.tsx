@@ -1,6 +1,7 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import {useEffect,useState} from 'react';
-async function api(path='',method='GET',body?:object){const response=await fetch('/api/managed-teams'+path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const result=await response.json();if(!response.ok)throw Error(response.status===403?'Bạn không có quyền quản lý nhóm hoặc nhân viên này.':'Không thực hiện được. Kiểm tra thông tin rồi thử lại.');return result.data}
+async function api(path='',method='GET',body?:object){const response=await actionFetch('/api/managed-teams'+path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const result=await response.json();if(!response.ok)throw Error(response.status===403?'Bạn không có quyền quản lý nhóm hoặc nhân viên này.':'Không thực hiện được. Kiểm tra thông tin rồi thử lại.');return result.data}
 const local=(date:string)=>{const d=new Date(date);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16)};
 export default function ManagedTeams(){
  const [teams,setTeams]=useState<any[]>([]),[selected,setSelected]=useState(''),[detail,setDetail]=useState<any>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[loading,setLoading]=useState(true);

@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import {PasswordRecoveryAdmin} from './password-recovery';
 
 import {useEffect,useState} from 'react';
@@ -11,7 +12,7 @@ import {PrintTemplateEditor} from './print-payroll';
 type Account={id:string;name:string;email:string;accountRole:'admin'|'manager'|'member';employeeCode?:string;employeeName?:string;rate?:number;departmentId?:string;departmentStatus?:string;suspended:boolean;permissions:Partial<Record<Module,Permission>>};
 
 async function request(path:string, body?:object,method='PATCH'){
- const response=await fetch('/api/admin/accounts'+path,body?{
+ const response=await actionFetch('/api/admin/accounts'+path,body?{
   method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body),
  }:{cache:'no-store'});
  if(response.status===401)window.dispatchEvent(new Event('bm-session-expired'));
@@ -24,7 +25,7 @@ function ModuleVisibility({lang}:{lang:string}){
  const [state,setState]=useState<Record<string,boolean>|null>(null);
  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
  useEffect(()=>{
-  fetch('/api/module-visibility',{cache:'no-store'}).then(async res=>{
+  actionFetch('/api/module-visibility',{cache:'no-store'}).then(async res=>{
    if(!res.ok)throw Error();
    setState((await res.json()).data);
   }).catch(()=>setMessage(vi?'Không tải được cấu hình hiển thị.':'Unable to load visibility settings.'));
@@ -32,7 +33,7 @@ function ModuleVisibility({lang}:{lang:string}){
  async function toggle(module:string,hidden:boolean){
   setBusy(true);setMessage('');
   try{
-   const res=await fetch('/api/module-visibility',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({module,hidden})});
+   const res=await actionFetch('/api/module-visibility',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({module,hidden})});
    if(!res.ok)throw Error();
    setState((await res.json()).data);
    setMessage(vi?'Đã lưu.':'Saved.');

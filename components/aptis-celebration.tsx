@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 
 import {useEffect,useState,type CSSProperties} from 'react';
 import {aptisPhotoPath,type AptisPhotoSlot} from '../lib/aptis-photos';
@@ -22,7 +23,7 @@ export default function AptisCelebration({lang,onContinue}:{lang:string;onContin
  useEffect(()=>{
   const controller=new AbortController();
   const signal=AbortSignal.any([controller.signal,AbortSignal.timeout(2500)]);
-  fetch('/api/aptis/photos',{cache:'no-store',signal}).then(async response=>{
+  actionFetch('/api/aptis/photos',{cache:'no-store',signal}).then(async response=>{
    if(!response.ok)throw new Error();
    const {data}=await response.json() as {data:AptisPhotoSlot[]};
    if(!controller.signal.aborted)setSlots(data);

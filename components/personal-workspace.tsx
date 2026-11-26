@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 
 import {useEffect,useState,type FormEvent} from 'react';
 import {CalendarDays,ExternalLink,Link2,Plus} from 'lucide-react';
@@ -33,7 +34,7 @@ async function cover(file:File){
 }
 
 async function request(path:string,method='GET',body?:object){
- const response=await fetch('/api/personal/'+path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
+ const response=await actionFetch('/api/personal/'+path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
  const result=await response.json();
  if(!response.ok){
   if(response.status===401)window.dispatchEvent(new Event('bm-session-expired'));

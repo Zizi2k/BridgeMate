@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import {useState,useRef} from 'react';
 export default function AttendanceImport({onImported}:{onImported:()=>Promise<void>}){
  const [file,setFile]=useState<File|null>(null),[skipExisting,setSkipExisting]=useState(true),[preview,setPreview]=useState<any>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[page,setPage]=useState(0),[confirm,setConfirm]=useState(false);const batch=useRef('');const encoded=useRef('');
@@ -8,7 +9,7 @@ export default function AttendanceImport({onImported}:{onImported:()=>Promise<vo
    if(file.size>3*1024*1024||!file.name.toLowerCase().endsWith('.xlsx'))throw Error('Chọn file .xlsx tối đa 3 MB.');
    if(!encoded.current){const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=16384)binary+=String.fromCharCode(...bytes.subarray(i,i+16384));encoded.current=btoa(binary)}
    if(action==='commit'&&!batch.current)batch.current=crypto.randomUUID();
-   const res=await fetch('/api/attendance-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:encoded.current,skipExisting,action,confirm,batchId:batch.current})});const result=await res.json();
+   const res=await actionFetch('/api/attendance-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({file:encoded.current,skipExisting,action,confirm,batchId:batch.current})});const result=await res.json();
    if(!res.ok){const code=result.error?.code;if(code==='IMPORT_VALIDATION'){setPreview(null);setConfirm(false)}const messages:Record<string,string>={XLSX_SIZE:'File .xlsx tối đa 3 MB.',XLSX_ROWS:'Tối đa 5.000 dòng dữ liệu mỗi lần nhập.',XLSX_SHEET:'Không tìm thấy sheet Cham_cong. Hãy tải và dùng đúng file mẫu.',XLSX_HEADERS:'Tiêu đề 8 cột A–H không khớp file mẫu.',XLSX_EMPTY:'Sheet Cham_cong chưa có dữ liệu.',XLSX_INVALID:'File Excel không hợp lệ hoặc có nội dung không được hỗ trợ.',IMPORT_VALIDATION:'Dữ liệu trên hệ thống đã thay đổi hoặc có dòng lỗi. Bấm kiểm tra lại file trước khi lưu.'};throw Error(messages[code]||'Không nhập được dữ liệu. Hãy kiểm tra và thử lại.')}
    if(action==='preview'){setPreview(result.data);setConfirm(false);setPage(0)}else{const data=result.data;setPreview(null);setConfirm(false);setMessage(`Đã nhập ${data.inserted} dòng chấm công; bỏ qua ${data.skipped} ngày đã có dữ liệu. Không ghi đè dữ liệu cũ.`);await onImported()}
   }catch(error){setMessage(error instanceof Error?error.message:'Không nhập được dữ liệu.')}finally{setBusy(false)}

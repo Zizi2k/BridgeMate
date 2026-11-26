@@ -1,11 +1,12 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {AlertCircle,BookOpen,Check,Copy,Loader2,Pencil,Plus,RotateCcw,Search,Trash2,X} from 'lucide-react';
 type Entry={id:string;category:string;en:string;vi:string;custom?:boolean};
 type Category={id:string;en:string;vi:string};
 type Draft={id?:string;category:string;en:string;vi:string};
 async function api(path:string,method='GET',body?:unknown){
- const r=await fetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',headers:method==='GET'?{}:{'Content-Type':'application/json'},...(method!=='GET'?{body:JSON.stringify(body??{})}:{})});
+ const r=await actionFetch('/api/'+path,{method,credentials:'same-origin',cache:'no-store',headers:method==='GET'?{}:{'Content-Type':'application/json'},...(method!=='GET'?{body:JSON.stringify(body??{})}:{})});
  const j=await r.json();if(!r.ok){if(j.error?.code==='UNAUTHORIZED')window.dispatchEvent(new Event('bm-session-expired'));throw new Error(j.error?.code||'SERVER_ERROR');}return j.data;
 }
 export default function Phrasebook({lang}:{lang:string}){

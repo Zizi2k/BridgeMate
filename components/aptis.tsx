@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {BookOpen,CheckCircle2,Lightbulb,Loader2} from 'lucide-react';
@@ -14,7 +15,7 @@ type Hint={text:string;ai:boolean};
 type Bank={count:number;enabled:boolean};
 
 async function aptisRequest<T>(action:string,method='GET',body?:object):Promise<T>{
- const response=await fetch('/api/aptis/'+action,{
+ const response=await actionFetch('/api/aptis/'+action,{
   method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{}),
  });
  const result=await response.json();

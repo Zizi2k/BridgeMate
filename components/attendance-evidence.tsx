@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import AttendancePhotoPicker from './attendance-photo-picker';
 import {useEffect,useRef,useState} from 'react';
 import {MAX_EVIDENCE_BYTES,imageFilenameAllowed} from '../lib/attendance-evidence';
@@ -11,7 +12,7 @@ export async function evidencePayload(file:File){
 }
 async function saveEvidence(entryId:string,file:File,photoId?:string){
  const payload=await evidencePayload(file);
- const res=await fetch('/api/attendance/'+entryId+'/photos'+(photoId?'/'+photoId:''),{method:photoId?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+ const res=await actionFetch('/api/attendance/'+entryId+'/photos'+(photoId?'/'+photoId:''),{method:photoId?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
  if(!res.ok)throw Error('Không tải được ảnh. Kiểm tra quyền đổi ảnh, giới hạn 3 MB/ảnh và 10 ảnh/ca rồi thử lại. Ca chấm công vẫn được giữ.');
 }
 export async function uploadEvidence(entryId:string,files:File[],onUploaded?:(file:File)=>void){
@@ -25,7 +26,7 @@ export default function AttendanceEvidence({entryId,canUpload,canRequestChange=f
  const [review,setReview]=useState<Photo|null>(null),[requesting,setRequesting]=useState(''),[reason,setReason]=useState(''),[replacements,setReplacements]=useState<Record<string,File>>({});
  const dialogRef=useRef<HTMLDialogElement>(null);
  useEffect(()=>{if(review)dialogRef.current?.showModal();else dialogRef.current?.close()},[review]);
- async function load(){const res=await fetch('/api/attendance/'+entryId+'/photos',{cache:'no-store'});if(!res.ok)throw Error('Không tải được danh sách ảnh.');setPhotos((await res.json()).data);setLoaded(true)}
+ async function load(){const res=await actionFetch('/api/attendance/'+entryId+'/photos',{cache:'no-store'});if(!res.ok)throw Error('Không tải được danh sách ảnh.');setPhotos((await res.json()).data);setLoaded(true)}
  async function run(action:()=>Promise<void>){setBusy(true);setError('');setMessage('');try{await action();await load()}catch(e:any){setError(e.message)}finally{setBusy(false)}}
  const source=(photo:Photo)=>'/api/attendance/'+entryId+'/photos/'+photo.id+'?v='+encodeURIComponent(photo.createdAt);
  const previewable=(photo:Photo)=>['image/jpeg','image/png','image/gif','image/webp','image/avif'].includes(photo.mime);
@@ -38,7 +39,7 @@ export default function AttendanceEvidence({entryId,canUpload,canRequestChange=f
  {photo.changeStatus==='pending'&&<p role="status"><strong>Yêu cầu đổi ảnh:</strong> {photo.changeReason}</p>}
  {photo.changeStatus==='resolved'&&<p>Đã gửi ảnh thay thế.</p>}
  {canRequestChange&&<button className="btn" disabled={busy} onClick={()=>{setRequesting(photo.id);setReason('')}}>Yêu cầu thay đổi ảnh</button>}
- {requesting===photo.id&&<form onSubmit={e=>{e.preventDefault();void run(async()=>{const res=await fetch('/api/attendance/'+entryId+'/photos/'+photo.id+'/request-change',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});if(!res.ok)throw Error('Không gửi được yêu cầu. Kiểm tra lại quyền phòng ban.');setRequesting('');setMessage('Đã gửi yêu cầu đổi ảnh cho nhân viên.')})}}>
+ {requesting===photo.id&&<form onSubmit={e=>{e.preventDefault();void run(async()=>{const res=await actionFetch('/api/attendance/'+entryId+'/photos/'+photo.id+'/request-change',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason})});if(!res.ok)throw Error('Không gửi được yêu cầu. Kiểm tra lại quyền phòng ban.');setRequesting('');setMessage('Đã gửi yêu cầu đổi ảnh cho nhân viên.')})}}>
  <label>Lý do yêu cầu <textarea required maxLength={1000} value={reason} onChange={e=>setReason(e.target.value)}/></label><button className="btn" disabled={busy}>Gửi yêu cầu</button><button className="btn" type="button" onClick={()=>setRequesting('')}>Hủy</button></form>}
  {(canAdminReplace||owns&&photo.changeStatus==='pending')&&<><AttendancePhotoPicker files={replacements[photo.id]?[replacements[photo.id]]:[]} disabled={busy} onPreparingChange={setBusy} label="Ảnh thay thế" onChange={files=>setReplacements(current=>{const next={...current};if(files[0])next[photo.id]=files[0];else delete next[photo.id];return next})}/><button className="btn" disabled={busy||!replacements[photo.id]} onClick={()=>void run(async()=>{await saveEvidence(entryId,replacements[photo.id],photo.id);setReplacements(current=>{const next={...current};delete next[photo.id];return next});setMessage('Đã thay ảnh minh chứng và hoàn tất yêu cầu.')})}>Gửi ảnh thay thế</button></>}
  </article>)}{!photos.length&&<p>Chưa có ảnh hoặc ảnh đã hết hạn lưu 2 tháng.</p>}

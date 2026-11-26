@@ -1,4 +1,5 @@
 'use client';
+import {actionFetch} from '../lib/action-feedback';
 import DailyWork from './daily-work';
 import {useEffect,useState} from 'react';
 import PrintPayroll from './print-payroll';
@@ -6,7 +7,7 @@ import SalarySettlement from './salary-settlement';
 import {groupPayrollReport,payrollReportKey,payrollIdentityKey,type PayrollReportRow} from '../lib/payroll-report';
 export type Department={id:string;name:string;active:number};
 export async function departmentRequest(path:string,method='GET',body?:object){
- const res=await fetch('/api/'+path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
+ const res=await actionFetch('/api/'+path,{method,cache:'no-store',...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
  if(res.status===401)window.dispatchEvent(new Event('bm-session-expired'));
  const json=await res.json();if(!res.ok)throw Error(res.status===403?'Bạn chưa được admin xác nhận phòng ban hoặc cấp quyền cho thao tác này.':'Không thực hiện được. Kiểm tra thông tin và thử lại.');return json.data;
 }
@@ -41,7 +42,7 @@ export default function DepartmentPayroll({ownerAdmin}:{ownerAdmin:boolean}){
   try{
    const params=filters();params.set('format',format);params.set('kind',selectedKind==='arrears'?'slips':selectedKind);if(selectedKind==='arrears')params.set('view','consolidated');
    if(row){params.delete('year');params.set('period',row.period);if(row.isConsolidated){params.set('view','consolidated');params.set('statementKey',payrollIdentityKey(row))}else params.set('reportKey',payrollReportKey(row));params.delete('q')}
-   const res=await fetch('/api/department-payroll/export?'+params,{cache:'no-store'});
+   const res=await actionFetch('/api/department-payroll/export?'+params,{cache:'no-store'});
    if(!res.ok)throw Error('Không xuất được file. Kiểm tra quyền phòng ban và bộ lọc thời gian rồi thử lại.');
    const blob=await res.blob(),url=URL.createObjectURL(blob),link=document.createElement('a');
    link.href=url;link.download=(res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1])||'Bang_luong.'+format;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
