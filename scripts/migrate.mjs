@@ -1,4 +1,5 @@
 import mysql from 'mysql2/promise';
+import {migrationStatements} from '../lib/migration-statements.ts';
 import {mysqlConfig} from '../lib/mysql-config.ts';
 import {readFile,readdir} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
@@ -18,7 +19,7 @@ try{
   if(previous&&previous.checksum!==checksum)throw new Error('Applied migration was modified: '+file);
   if(previous?.completed){console.log('Already applied:',file);continue;}
   if(!previous)await client.query('INSERT INTO bridgemate_migrations (name,checksum) VALUES (?,?)',[file,checksum]);
-  const statements=sql.split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean);
+  const statements=migrationStatements(sql);
   for(let i=previous?.next_statement||0;i<statements.length;i++){
    await client.query(statements[i]);
    await client.query('UPDATE bridgemate_migrations SET next_statement=? WHERE name=?',[i+1,file]);
