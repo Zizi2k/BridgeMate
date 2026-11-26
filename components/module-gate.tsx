@@ -13,7 +13,7 @@ export default function ModuleGate({module,lang,children}:{module:Module;lang:st
   fetch('/api/access',{cache:'no-store'}).then(async response=>{
    if(!response.ok)throw Error();
    const {data}=await response.json();
-   if(active)setStatus((data.admin||(data.manager&&module!=='links'))?'approved':data.permissions[module]||'required');
+   if(active)setStatus((data.admin||data.allowed?.[module])?'approved':data.permissions[module]||'required');
   }).catch(()=>{if(active)setStatus('error')});
   return()=>{active=false};
  },[module,revision]);

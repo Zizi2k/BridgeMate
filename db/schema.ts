@@ -60,12 +60,12 @@ export const employeeAssignments=mysqlTable('employee_assignments',{
 });
 export const attendanceEntries=mysqlTable('attendance_entries',{
  id:id().primaryKey(),userId:id('user_id').notNull().references(()=>users.id),
- day:varchar('day',{length:10}).notNull(),start:iso('start').notNull(),end:iso('end'),
+ day:varchar('day',{length:10}).notNull(),regularDay:varchar('regular_day',{length:10}),kind:varchar('kind',{length:12}).notNull().default('regular'),workLabel:varchar('work_label',{length:180}).notNull().default(''),start:iso('start').notNull(),end:iso('end'),locations:json('locations'),
  breakMinutes:int('break_minutes').notNull().default(0),
  supplemented:int('supplemented').notNull().default(0),
  editable:int('editable').notNull().default(0),reason:text('reason').notNull(),
  updatedBy:id('updated_by').notNull(),updatedAt:iso('updated_at').notNull(),
-},t=>[uniqueIndex('attendance_user_day').on(t.userId,t.day)]);
+},t=>[uniqueIndex('attendance_user_day').on(t.userId,t.regularDay),index('attendance_employee_day').on(t.userId,t.day)]);
 export const attendanceAudit=mysqlTable('attendance_audit',{
  id:id().primaryKey(),entryId:id('entry_id').notNull(),actorId:id('actor_id').notNull(),
  data:json('data').notNull(),createdAt:iso('created_at').notNull(),
@@ -80,7 +80,7 @@ export const accountDepartments=mysqlTable('account_departments',{
 },t=>[index('account_department_idx').on(t.departmentId,t.status)]);
 export const attendancePhotos=mysqlTable('attendance_photos',{
  id:id().primaryKey(),entryId:id('entry_id').notNull().references(()=>attendanceEntries.id,{onDelete:'cascade'}),
- name:varchar('name',{length:180}).notNull(),mime:varchar('mime',{length:120}).notNull(),data:mediumtext('data').notNull(),
+ clockAction:varchar('clock_action',{length:8}),name:varchar('name',{length:180}).notNull(),mime:varchar('mime',{length:120}).notNull(),data:mediumtext('data').notNull(),
  createdAt:iso('created_at').notNull(),expiresAt:iso('expires_at').notNull(),
 },t=>[index('attendance_photos_expiry').on(t.expiresAt),index('attendance_photos_entry').on(t.entryId)]);
 export const evidenceChangeRequests=mysqlTable('evidence_change_requests',{
@@ -111,3 +111,7 @@ export const passwordRecovery=mysqlTable('password_recovery',{
 export const attendanceImportBatches=mysqlTable('attendance_import_batches',{
  id:id().primaryKey(),actorId:id('actor_id').notNull(),requestHash:varchar('request_hash',{length:64}).notNull(),inserted:int('inserted').notNull().default(0),skipped:int('skipped').notNull().default(0),createdAt:iso('created_at').notNull(),
 });
+
+export const workSchedules=mysqlTable('work_schedules',{
+ id:id().primaryKey(),userId:id('user_id').notNull().references(()=>users.id),departmentId:id('department_id').notNull(),employeeCode:varchar('employee_code',{length:32}).notNull(),employeeName:varchar('employee_name',{length:120}).notNull(),day:varchar('day',{length:10}).notNull(),start:iso('start').notNull(),end:iso('end').notNull(),overnight:int('overnight').notNull().default(0),breakMinutes:int('break_minutes').notNull().default(0),note:text('note').notNull(),version:int('version').notNull().default(1),deleted:int('deleted').notNull().default(0),createdAt:iso('created_at').notNull(),updatedAt:iso('updated_at').notNull(),
+},t=>[index('work_schedule_user_day').on(t.userId,t.day),index('work_schedule_department_day').on(t.departmentId,t.day)]);

@@ -1,7 +1,11 @@
-export const modules=['links','payroll-personal','payroll-team'] as const;
+export const modules=['document-forms','phrases','ai','quiz','links','payroll-personal','payroll-team'] as const;
 export type Module=typeof modules[number];
 export type Permission='pending'|'approved'|'denied';
 export const moduleLabels:Record<Module,[string,string]>={
+ 'document-forms':['Document forms','Điền biểu mẫu AI'],
+ phrases:['Phrasebook','Cẩm nang'],
+ ai:['AI assistant','Trợ lý AI'],
+ quiz:['Practice','Luyện tập'],
  links:['My links','Kho liên kết'],
  'payroll-personal':['Personal payroll','Lương cá nhân'],
  'payroll-team':['Team payroll','Lương nhóm'],
@@ -26,4 +30,12 @@ export function validatePrintTemplate(input:Record<string,unknown>):PrintTemplat
   output[key]=value.trim();
  }
  return output;
+}
+
+export const restrictedModules=['document-forms','links','phrases','ai','quiz'] as const;
+export const pageModule:Record<string,Module>={'personal-links':'links','document-forms':'document-forms',phrases:'phrases',ai:'ai',quiz:'quiz'};
+
+export function canAccessModule(module:Module,context:{ownerAdmin:boolean;manager:boolean;demo:boolean;hidden:boolean;status?:Permission}){
+ if(context.ownerAdmin||context.manager&&module.startsWith('payroll-'))return true;
+ return !context.demo&&!context.hidden&&context.status==='approved';
 }

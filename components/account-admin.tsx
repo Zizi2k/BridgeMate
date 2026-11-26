@@ -4,7 +4,7 @@ import {PasswordRecoveryAdmin} from './password-recovery';
 import {useEffect,useState} from 'react';
 import {DepartmentAdmin,departmentRequest,type Department} from './departments';
 
-import {modules,moduleLabels,type Module,type Permission} from '../lib/module-access';
+import {modules,restrictedModules,moduleLabels,type Module,type Permission} from '../lib/module-access';
 import {AptisBank} from './aptis';
 import {PrintTemplateEditor} from './print-payroll';
 
@@ -21,7 +21,7 @@ async function request(path:string, body?:object,method='PATCH'){
 
 function ModuleVisibility({lang}:{lang:string}){
  const vi=lang==='vi';
- const [state,setState]=useState<{links:boolean;payroll:boolean}|null>(null);
+ const [state,setState]=useState<Record<string,boolean>|null>(null);
  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
  useEffect(()=>{
   fetch('/api/module-visibility',{cache:'no-store'}).then(async res=>{
@@ -29,7 +29,7 @@ function ModuleVisibility({lang}:{lang:string}){
    setState((await res.json()).data);
   }).catch(()=>setMessage(vi?'Không tải được cấu hình hiển thị.':'Unable to load visibility settings.'));
  },[vi]);
- async function toggle(module:'links'|'payroll',hidden:boolean){
+ async function toggle(module:string,hidden:boolean){
   setBusy(true);setMessage('');
   try{
    const res=await fetch('/api/module-visibility',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({module,hidden})});
@@ -42,8 +42,7 @@ function ModuleVisibility({lang}:{lang:string}){
  return <fieldset className="review-card">
   <legend>{vi?'Hiển thị tính năng với tài khoản khác':'Feature visibility for other accounts'}</legend>
   {state&&<div style={{display:'flex',flexWrap:'wrap',gap:'1rem'}}>
-   <label><input type="checkbox" checked={state.links} disabled={busy} onChange={e=>void toggle('links',e.target.checked)}/> {vi?'Ẩn Kho liên kết':'Hide My links'}</label>
-   <label><input type="checkbox" checked={state.payroll} disabled={busy} onChange={e=>void toggle('payroll',e.target.checked)}/> {vi?'Ẩn Bảng lương':'Hide Payroll'}</label>
+   {[...restrictedModules,'payroll'].map(module=><label key={module}><input type="checkbox" checked={!!state[module]} disabled={busy} onChange={e=>void toggle(module,e.target.checked)}/> {vi?'Ẩn':'Hide'} {module==='payroll'?(vi?'Bảng lương':'Payroll'):moduleLabels[module as Module][vi?1:0]}</label>)}
   </div>}
   {message&&<p role="status">{message}</p>}
  </fieldset>;
@@ -100,11 +99,11 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
     <h3>{account.name}</h3><p style={{overflowWrap:'anywhere'}}>{account.email}</p>
     <p>{account.accountRole==='admin'?t('Administrator','Quản trị viên'):account.accountRole==='manager'?t('Manager','Người quản lý'):t('Member','Thành viên')} · {account.suspended?t('Suspended','Đã khóa'):t('Active','Đang hoạt động')}</p>
     {ownerAdmin&&account.accountRole!=='admin'&&<EmployeeSetup account={account} departments={departments} saved={updated=>setRows(rows=>rows.map(row=>row.id===account.id?{...row,...updated}:row))}/>}
-    {account.accountRole!=='admin'&&modules.filter(module=>ownerAdmin||module!=='links').map(module=><div key={module}>
+    {account.accountRole!=='admin'&&modules.filter(module=>ownerAdmin||module.startsWith('payroll-')).map(module=><div key={module}>
      <strong>{moduleLabels[module][lang==='vi'?1:0]}</strong>
      <p>{account.permissions[module]==='pending'?t('Pending','Chờ duyệt'):account.permissions[module]==='approved'?t('Approved','Đã cấp'):t('No access','Chưa cấp')}</p>
-     <button type="button" className="btn" disabled={!!busy||account.permissions[module]==='approved'} onClick={()=>void changeAccess(account,module,'approved')}>{t('Approve','Duyệt')}</button>
-     <button type="button" className="btn" disabled={!!busy||!['pending','approved'].includes(account.permissions[module]||'')} onClick={()=>void changeAccess(account,module,'denied')}>{t('Deny / revoke','Từ chối / thu hồi')}</button>
+     <button type="button" className="btn" disabled={!!busy||account.permissions[module]==='approved'} onClick={()=>void changeAccess(account,module,'approved')}>{t('Show / approve','Hiện / cấp quyền')}</button>
+     <button type="button" className="btn" disabled={!!busy||!['pending','approved'].includes(account.permissions[module]||'')} onClick={()=>void changeAccess(account,module,'denied')}>{t('Hide / revoke','Ẩn / thu hồi')}</button>
     </div>)}
     {account.accountRole!=='admin'&&<button type="button" className="btn" disabled={!!busy} onClick={()=>void remove(account)}>{t('Delete account','Xóa tài khoản')}</button>}
     {account.accountRole!=='admin'&&<button className="btn" disabled={!!busy} onClick={()=>void toggle(account)}>{account.suspended?t('Restore access','Mở khóa'):t('Suspend','Khóa tài khoản')}</button>}

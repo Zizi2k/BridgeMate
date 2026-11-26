@@ -1,6 +1,6 @@
 import {fromBuffer} from 'yauzl';
 import {XMLParser,XMLValidator} from 'fast-xml-parser';
-import {localDay,netShiftMinutes} from './attendance.ts';
+import {localDay,payableShiftMinutes} from './attendance.ts';
 import {validDay} from './personal-workspace.ts';
 import {overlapsAttendance} from './attendance-supplement.ts';
 export const IMPORT_HEADERS=['Mã nhân viên','Họ và tên','Ngày','Giờ vào','Giờ ra','Nghỉ trưa (giờ)','Qua đêm (0/1)','Lý do / ghi chú'];
@@ -73,10 +73,10 @@ export function previewAttendanceImport(source:{rows:ImportSourceRow[];date1904:
    const next=new Date(day+'T00:00:00Z');if(overnight==='1')next.setUTCDate(next.getUTCDate()+1);
    const start=new Date(day+'T'+startClock+':00+07:00').toISOString(),end=new Date(next.toISOString().slice(0,10)+'T'+endClock+':00+07:00').toISOString();if(Date.parse(end)>+currentTime)throw Error('Giờ ra nằm trong tương lai.');
    const breakHours=String(breakRaw).trim()===''?0:Number(String(breakRaw).replace(',','.'));const breakMinutes=Math.round(breakHours*60);if(!Number.isFinite(breakHours)||breakHours<0||Math.abs(breakHours*60-breakMinutes)>0.00001)throw Error('Nghỉ trưa phải là số giờ hợp lệ.');
-   let minutes:number;try{minutes=netShiftMinutes(start,end,breakMinutes)}catch{throw Error('Giờ ra phải sau giờ vào; ca tối đa 24 giờ và nghỉ trưa không vượt thời lượng ca.')}
+   let minutes:number;try{minutes=payableShiftMinutes(start,end,breakMinutes)}catch{throw Error('Giờ ra phải sau giờ vào; ca tối đa 24 giờ và nghỉ trưa không vượt thời lượng ca.')}
    const reason=String(reasonRaw).trim()||'Nhập chấm công từ Excel (admin xác nhận)';if(reason.length>1000)throw Error('Ghi chú tối đa 1.000 ký tự.');
    candidate={line:row.line,userId:employee.userId,code:employee.code,name:employee.name,day,start,end,breakMinutes,reason,minutes};
-   const own=byUser.get(employee.userId)||[];if(own.some(entry=>entry.day===day)){if(!skipExisting)throw Error('Ngày đã có chấm công trên hệ thống.');return {line:row.line,code,name,day,status:'skip',message:'Ngày đã có chấm công: bỏ qua, không ghi đè.'}}
+   const own=byUser.get(employee.userId)||[];if(own.some(entry=>entry.day===day&&entry.kind!=='other')){if(!skipExisting)throw Error('Ngày đã có chấm công thường trên hệ thống.');return {line:row.line,code,name,day,status:'skip',message:'Ngày đã có chấm công thường: bỏ qua, không ghi đè.'}}
    const planned=accepted.get(employee.userId)||[];if(overlapsAttendance(start,end,[...own,...planned]))throw Error('Ca làm chồng với ca khác hoặc ca chưa chấm ra.');planned.push(candidate);accepted.set(employee.userId,planned);
    return {line:row.line,code,name,day,status:'ready',message:'Hợp lệ',candidate};
   }catch(error){return {line:row.line,code,name,day,status:'error',message:error instanceof Error?error.message:'Dữ liệu không hợp lệ.'}}
