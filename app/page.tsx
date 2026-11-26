@@ -1,4 +1,5 @@
 'use client';
+import AppearanceMenu from '../components/appearance-menu';
 import {actionFetch,showActionFeedback} from '../lib/action-feedback';
 import WeeklySchedule from '../components/weekly-schedule';
 import {ForgotPassword,PasswordChangeGate} from '../components/password-recovery';
@@ -64,7 +65,7 @@ export default function App(){
  useEffect(()=>{setDetail(null);setSearch('');setFilter('all');if(teamId&&aptisPassed){setLoading(true);refresh().catch(fail).finally(()=>setLoading(false))}else{setTasks([]);setPeople([])}},[teamId,aptisPassed]);
  useEffect(()=>{function key(e:KeyboardEvent){if(e.key==='Escape')setModal('')}window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)},[]);
  useEffect(()=>{if(!modal)return;const previous=document.activeElement as HTMLElement|null;const dialog=document.querySelector('[role=dialog]') as HTMLElement|null;const query='button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]';(dialog?.querySelector(query) as HTMLElement|null)?.focus();function trap(e:KeyboardEvent){if(e.key!=='Tab'||!dialog)return;const items=Array.from(dialog.querySelectorAll<HTMLElement>(query));const first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}document.addEventListener('keydown',trap);const old=document.body.style.overflow;document.body.style.overflow='hidden';return()=>{document.removeEventListener('keydown',trap);document.body.style.overflow=old;previous?.focus({preventScroll:true})}},[modal]);
- const themeButton=<button type="button" className="btn theme-toggle" aria-pressed={dark} onClick={()=>{const next=!dark;localStorage.setItem('bm-theme',next?'dark':'light');setDark(next)}}>{dark?t('Light mode','Chế độ sáng'):t('Dark mode','Chế độ tối')}</button>;
+ const themeButton=<AppearanceMenu dark={dark} onDarkChange={value=>{localStorage.setItem('bm-theme',value?'dark':'light');setDark(value)}} ownerAdmin={user?.accountRole==='admin'} userId={user?.id} lang={lang}/>;
  const [hiddenModules,setHiddenModules]=useState<Record<string,boolean>|null>(null);
  useEffect(()=>{
   if(!user?.id||!aptisPassed)return;

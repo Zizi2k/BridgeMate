@@ -1,3 +1,4 @@
+import {isLayout} from '../../../lib/appearance';
 import {VERIFICATION_TTL,verificationToken,tokenDigest,validVerificationToken,verificationThrottle,verificationMailConfigured,sendVerificationEmail} from '../../../lib/email-verification';
 import {shiftRateInput} from '../../../lib/attendance-rates';
 import {attendanceKind,regularAttendanceExists} from '../../../lib/attendance-kind';
@@ -174,6 +175,12 @@ async function handle(req:Request){
  async function managesEmployee(id:string){return canManageDepartment(ownerAdmin,departmentManager,departmentContext,await employeeDepartment(id))}
  async function departmentEmployeeIds(){if(!departmentManager)return [];return (await db.select({userId:accountDepartments.userId}).from(accountDepartments).where(and(eq(accountDepartments.departmentId,currentDepartment.departmentId),eq(accountDepartments.status,'approved')))).map(row=>row.userId)}
 
+ if(path[0]==='appearance'&&path.length===1){
+  const readAppearance=async()=>{const [row]=await db.select().from(printSettings).where(eq(printSettings.id,'appearance'));const saved=row?.data as any;return {layout:isLayout(saved?.layout)?saved.layout:'standard'}};
+  if(method==='GET')return ok(await readAppearance());
+  if(method==='PATCH'){check(ownerAdmin&&!user.demo,'FORBIDDEN',403);check(isLayout(body.layout));const data={layout:body.layout};await db.insert(printSettings).values({id:'appearance',data}).onDuplicateKeyUpdate({set:{data}});return ok(data)}
+  throw new ApiError('NOT_FOUND',404);
+ }
  const isAptis=path[0]==='aptis'&&path.length===2;
  if(isAptis&&path[1]==='photos'&&method==='GET'){
   const entries=await db.select({id:printSettings.id}).from(printSettings)
