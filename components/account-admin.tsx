@@ -2,7 +2,7 @@
 import {actionFetch} from '../lib/action-feedback';
 import {PasswordRecoveryAdmin} from './password-recovery';
 
-import {useEffect,useState} from 'react';
+import {useEffect,useState,type ReactNode} from 'react';
 import {DepartmentAdmin,departmentRequest,type Department} from './departments';
 
 import {modules,restrictedModules,moduleLabels,type Module,type Permission} from '../lib/module-access';
@@ -88,26 +88,21 @@ export default function AccountAdmin({lang,ownerAdmin=false}:{lang:string;ownerA
    setRows(current=>current.filter(row=>row.id!==account.id));
   }catch{setError(true)}finally{setBusy('')}
  }
- return <section>
+ return <section className="account-admin-page">
   <div className="page-heading"><div><h1>{t('Account administration','Quản trị tài khoản')}</h1></div></div>
-  {ownerAdmin&&<ModuleVisibility lang={lang}/>}
-  {ownerAdmin&&<><PasswordRecoveryAdmin/><DepartmentAdmin departments={departments} onChanged={loadDepartments}/></>}
-  <PrintTemplateEditor/>
-  <AptisBank lang={lang}/>
+  {ownerAdmin&&<AdminSection title={t('Feature visibility','Ẩn / hiện tính năng')}><ModuleVisibility lang={lang}/></AdminSection>}
+  {ownerAdmin&&<><AdminSection title={t('Password recovery requests','Yêu cầu cấp lại mật khẩu')}><PasswordRecoveryAdmin/></AdminSection><AdminSection title={t('Departments','Quản lý phòng ban')}><DepartmentAdmin departments={departments} onChanged={loadDepartments}/></AdminSection></>}
+  <AdminSection title={t('Payslip template','Mẫu phiếu lương')}><PrintTemplateEditor/></AdminSection>
+  <AdminSection title={t('Aptis configuration','Cấu hình Aptis')}><AptisBank lang={lang}/></AdminSection>
   {error&&<p role="alert">{t('Could not complete the request. Reload and try again.','Không thể thực hiện thao tác. Tải lại trang và thử lại.')}</p>}
   {loading?<p role="status">{t('Loading accounts…','Đang tải tài khoản…')}</p>:
-   <div className="members-grid">{rows.map(account=><article className="member-card" key={account.id}>
+   <div className="members-grid account-admin-grid">{rows.map(account=><article className="member-card" key={account.id}>
     <h3>{account.name}</h3><p style={{overflowWrap:'anywhere'}}>{account.email}</p>
     <p>{account.accountRole==='admin'?t('Administrator','Quản trị viên'):account.accountRole==='manager'?t('Manager','Người quản lý'):t('Member','Thành viên')} · {account.suspended?t('Suspended','Đã khóa'):t('Active','Đang hoạt động')}</p>
-    {ownerAdmin&&account.accountRole!=='admin'&&<EmployeeSetup account={account} departments={departments} saved={updated=>setRows(rows=>rows.map(row=>row.id===account.id?{...row,...updated}:row))}/>}
-    {account.accountRole!=='admin'&&modules.filter(module=>ownerAdmin||module.startsWith('payroll-')).map(module=><div key={module}>
-     <strong>{moduleLabels[module][lang==='vi'?1:0]}</strong>
-     <p>{account.permissions[module]==='pending'?t('Pending','Chờ duyệt'):account.permissions[module]==='approved'?t('Approved','Đã cấp'):t('No access','Chưa cấp')}</p>
-     <button type="button" className="btn" disabled={!!busy||account.permissions[module]==='approved'} onClick={()=>void changeAccess(account,module,'approved')}>{t('Show / approve','Hiện / cấp quyền')}</button>
-     <button type="button" className="btn" disabled={!!busy||!['pending','approved'].includes(account.permissions[module]||'')} onClick={()=>void changeAccess(account,module,'denied')}>{t('Hide / revoke','Ẩn / thu hồi')}</button>
-    </div>)}
-    {account.accountRole!=='admin'&&<button type="button" className="btn" disabled={!!busy} onClick={()=>void remove(account)}>{t('Delete account','Xóa tài khoản')}</button>}
-    {account.accountRole!=='admin'&&<button className="btn" disabled={!!busy} onClick={()=>void toggle(account)}>{account.suspended?t('Restore access','Mở khóa'):t('Suspend','Khóa tài khoản')}</button>}
+    {ownerAdmin&&account.accountRole!=='admin'&&<AdminSection title={t('Employee & department','Thông tin nhân viên / phòng ban')+(account.departmentStatus==='pending'?t(' · Pending',' · Chờ duyệt'):'')}><EmployeeSetup account={account} departments={departments} saved={updated=>setRows(rows=>rows.map(row=>row.id===account.id?{...row,...updated}:row))}/></AdminSection>}
+    {account.accountRole!=='admin'&&<AccountPermissions account={account} ownerAdmin={ownerAdmin} lang={lang} busy={!!busy} onChange={(module,status)=>changeAccess(account,module,status)}/>}
+    {account.accountRole!=='admin'&&<AdminSection title={t('Account actions','Thao tác tài khoản')}><div className="admin-account-actions"><button type="button" className="btn" disabled={!!busy} onClick={()=>void remove(account)}>{t('Delete account','Xóa tài khoản')}</button>
+    <button className="btn" disabled={!!busy} onClick={()=>void toggle(account)}>{account.suspended?t('Restore access','Mở khóa'):t('Suspend','Khóa tài khoản')}</button></div></AdminSection>}
    </article>)}</div>}
   <div className="board-toolbar">
    <button className="btn" disabled={page===1||loading||!!busy} onClick={()=>move(page-1)}>{t('Previous','Trang trước')}</button>
@@ -129,4 +124,17 @@ function EmployeeSetup({account,departments,saved}:{account:Account;departments:
  <label>Lương mỗi giờ (đ) <input required type="number" min={0} max={1000000000} value={rate} onChange={e=>setRate(Number(e.target.value))}/></label>
  <label><input type="checkbox" checked={manager} onChange={e=>setManager(e.target.checked)}/> Người quản lý</label><button className="btn primary">{manager?'Duyệt phòng ban và cấp quyền quản lý':account.departmentStatus==='pending'?'Lưu và duyệt phòng ban':'Lưu thông tin và phòng ban'}</button><p role="status">{status}</p>
  </form>;
+}
+
+
+function AdminSection({title,children}:{title:string;children:ReactNode}){
+ return <details className="admin-disclosure"><summary>{title}</summary><div className="admin-disclosure-body">{children}</div></details>;
+}
+function AccountPermissions({account,ownerAdmin,lang,busy,onChange}:{account:Account;ownerAdmin:boolean;lang:string;busy:boolean;onChange:(module:Module,status:'approved'|'denied')=>Promise<void>}){
+ const vi=lang==='vi',available=modules.filter(module=>ownerAdmin||module.startsWith('payroll-'));
+ const [selected,setSelected]=useState<Module>(()=>available.find(module=>account.permissions[module]==='pending')||available[0]);
+ const module=available.includes(selected)?selected:available[0],status=account.permissions[module];
+ const pending=available.filter(module=>account.permissions[module]==='pending').length;
+ const statusLabel=(value:Permission|undefined)=>value==='pending'?(vi?'Chờ duyệt':'Pending'):value==='approved'?(vi?'Đã cấp':'Approved'):(vi?'Chưa cấp':'No access');
+ return <AdminSection title={(vi?'Quyền truy cập':'Access permissions')+(pending?' · '+pending+(vi?' chờ duyệt':' pending'):'')}><label>{vi?'Chọn tính năng':'Choose feature'}<select value={module} disabled={busy} onChange={event=>setSelected(event.target.value as Module)}>{available.map(item=><option key={item} value={item}>{moduleLabels[item][vi?1:0]} · {statusLabel(account.permissions[item])}</option>)}</select></label><p role="status">{statusLabel(status)}</p><div className="admin-account-actions"><button type="button" className="btn" disabled={busy||status==='approved'} onClick={()=>void onChange(module,'approved')}>{vi?'Hiện / cấp quyền':'Show / approve'}</button><button type="button" className="btn" disabled={busy||!['pending','approved'].includes(status||'')} onClick={()=>void onChange(module,'denied')}>{vi?'Ẩn / thu hồi':'Hide / revoke'}</button></div></AdminSection>;
 }
