@@ -1,5 +1,5 @@
 import {attendanceKind,regularAttendanceExists} from '../../../lib/attendance-kind';
-import {scheduleWeek,addScheduleDays,plannedShift,scheduleOverlaps} from '../../../lib/work-schedule';
+import {scheduleWeek,addScheduleDays,plannedShift,scheduleOverlaps,scheduleCapacityAllows,validScheduleCapacity} from '../../../lib/work-schedule';
 import {clockLocation,clockPhoto} from '../../../lib/clock-proof';
 import {readAttendanceXlsx,previewAttendanceImport,IMPORT_MAX_BYTES} from '../../../lib/attendance-import';
 import {buildAttendanceReport} from '../../../lib/attendance-report';
@@ -36,7 +36,7 @@ import {composePhrasebook,validatePhrase,PhraseError} from '../../../lib/phraseb
 import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
-import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications,passwordRecovery,attendanceImportBatches,workSchedules} from '../../../db/schema';
+import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications,passwordRecovery,attendanceImportBatches,workSchedules,workScheduleCapacities,workScheduleCapacityLock} from '../../../db/schema';
 import {like,and,or,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
@@ -370,11 +370,37 @@ async function handle(req:Request){
    const roster=await db.select({id:employeeAssignments.userId,code:employeeAssignments.code,name:employeeAssignments.name,departmentId:accountDepartments.departmentId,departmentName:departments.name}).from(employeeAssignments).innerJoin(users,eq(users.id,employeeAssignments.userId)).innerJoin(accountDepartments,and(eq(accountDepartments.userId,users.id),eq(accountDepartments.status,'approved'))).innerJoin(departments,and(eq(departments.id,accountDepartments.departmentId),eq(departments.active,1))).leftJoin(removedAccounts,eq(removedAccounts.userId,users.id)).where(and(eq(users.demo,0),isNull(removedAccounts.userId),ownerAdmin?(requestedDepartment?eq(departments.id,requestedDepartment):undefined):departmentManager?inArray(users.id,managerIds.length?managerIds:['']):eq(users.id,user.id)));
    const visibleIds=roster.map(person=>person.id);
    const rows=await db.select().from(workSchedules).where(and(eq(workSchedules.deleted,0),sql`${workSchedules.day} >= ${week}`,sql`${workSchedules.day} < ${addScheduleDays(week,7)}`,ownerAdmin?(requestedDepartment?eq(workSchedules.departmentId,requestedDepartment):undefined):departmentManager?and(eq(workSchedules.departmentId,currentDepartment.departmentId),inArray(workSchedules.userId,visibleIds.length?visibleIds:[''])):eq(workSchedules.userId,user.id))).orderBy(workSchedules.day,workSchedules.start,workSchedules.employeeName);
-   return ok({week,end:addScheduleDays(week,6),rows,employees:roster,viewerId:user.id,canViewDepartment:ownerAdmin||departmentManager,ownerAdmin,canRegister:!!assignment&&!!departmentContext?.active&&departmentContext.status==='approved'});
+   const capacityDepartmentId=ownerAdmin?(requestedDepartment||currentDepartment?.departmentId||''):currentDepartment?.departmentId||'';
+   const capacityScope=ownerAdmin?(requestedDepartment?eq(workSchedules.departmentId,requestedDepartment):undefined):eq(workSchedules.departmentId,capacityDepartmentId);
+   const [limits,counts]=await Promise.all([
+    db.select({departmentId:workScheduleCapacities.departmentId,day:workScheduleCapacities.day,capacity:workScheduleCapacities.capacity}).from(workScheduleCapacities).where(and(sql`${workScheduleCapacities.day} >= ${week}`,sql`${workScheduleCapacities.day} < ${addScheduleDays(week,7)}`,ownerAdmin?(requestedDepartment?eq(workScheduleCapacities.departmentId,requestedDepartment):undefined):eq(workScheduleCapacities.departmentId,capacityDepartmentId))),
+    db.select({departmentId:workSchedules.departmentId,day:workSchedules.day,registered:sql<number>`COUNT(DISTINCT ${workSchedules.userId})`}).from(workSchedules).where(and(eq(workSchedules.deleted,0),sql`${workSchedules.day} >= ${week}`,sql`${workSchedules.day} < ${addScheduleDays(week,7)}`,capacityScope)).groupBy(workSchedules.departmentId,workSchedules.day),
+   ]);
+   return ok({week,end:addScheduleDays(week,6),rows,employees:roster,capacityDepartmentId,registrationDepartmentId:currentDepartment?.departmentId||'',capacities:limits,capacityCounts:counts,canManageCapacity:ownerAdmin||departmentManager,viewerId:user.id,canViewDepartment:ownerAdmin||departmentManager,ownerAdmin,canRegister:!!assignment&&!!departmentContext?.active&&departmentContext.status==='approved'});
+  }
+  if(path[1]==='capacity'&&path.length===2&&method==='PUT'){
+   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+   const departmentId=str(body.departmentId,36);
+   check(ownerAdmin||departmentId===currentDepartment?.departmentId,'FORBIDDEN',403);
+   const [department]=await db.select().from(departments).where(and(eq(departments.id,departmentId),eq(departments.active,1)));check(department,'DEPARTMENT_REQUIRED',403);
+   check(Array.isArray(body.days)&&body.days.length>0&&body.days.length<=7,'INVALID_CAPACITY');
+   const days=body.days as {day:string;capacity:number}[];
+   check(days.every(item=>item&&typeof item==='object'&&typeof item.day==='string'&&validDay(item.day)&&item.day>=localDay()&&validScheduleCapacity(item.capacity))&&new Set(days.map(item=>item.day)).size===days.length,'INVALID_CAPACITY');
+   await db.transaction(async tx=>{
+    await tx.select().from(workScheduleCapacityLock).where(eq(workScheduleCapacityLock.id,1)).for('update');
+    for(const item of days){
+     const booked=await tx.select({userId:workSchedules.userId}).from(workSchedules).where(and(eq(workSchedules.departmentId,departmentId),eq(workSchedules.day,item.day),eq(workSchedules.deleted,0))).for('update');
+     check(item.capacity>=new Set(booked.map(row=>row.userId)).size,'CAPACITY_BELOW_REGISTERED',409);
+     const values={departmentId,day:item.day,capacity:item.capacity,updatedBy:user.id,updatedAt:now()};
+     await tx.insert(workScheduleCapacities).values(values).onDuplicateKeyUpdate({set:values});
+    }
+   });return ok({saved:true});
   }
   check((method==='POST'&&path.length===1)||((method==='PATCH'||method==='DELETE')&&path.length===2),'NOT_FOUND',404);
   const id=method==='POST'?str(body.id,36):path[1];check(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id));
   return ok(await db.transaction(async tx=>{
+   // Serialize quota changes and registrations so simultaneous requests cannot oversubscribe.
+   await tx.select().from(workScheduleCapacityLock).where(eq(workScheduleCapacityLock.id,1)).for('update');
    const [employee]=await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id)).for('update');check(employee,'EMPLOYEE_NOT_ASSIGNED',403);
    const [membership]=await tx.select({id:departments.id,active:departments.active,status:accountDepartments.status}).from(accountDepartments).innerJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(eq(accountDepartments.userId,user.id));
    const [current]=await tx.select().from(workSchedules).where(eq(workSchedules.id,id)).for('update');
@@ -386,6 +412,12 @@ async function handle(req:Request){
    if(method==='POST'&&current){check(current.userId===user.id&&!current.deleted&&['day','start','end','overnight','breakMinutes','note'].every(key=>(current as any)[key]===(data as any)[key]),'CONFLICT',409);return {id,reused:true}}
    const existing=await tx.select().from(workSchedules).where(and(eq(workSchedules.userId,user.id),eq(workSchedules.deleted,0)));
    check(!scheduleOverlaps(data.start,data.end,existing.filter(row=>row.id!==id)),'SCHEDULE_OVERLAP',409);
+   const [limit]=await tx.select().from(workScheduleCapacities).where(and(eq(workScheduleCapacities.departmentId,membership.id),eq(workScheduleCapacities.day,data.day))).for('update');
+   const booked=await tx.select({userId:workSchedules.userId}).from(workSchedules).where(and(eq(workSchedules.departmentId,membership.id),eq(workSchedules.day,data.day),eq(workSchedules.deleted,0),sql`${workSchedules.id} <> ${id}`)).for('update');
+   const participants=booked.map(row=>row.userId);
+   // Editing an existing reservation on the same day does not consume another seat.
+   if(current&&!current.deleted&&current.departmentId===membership.id&&current.day===data.day)participants.push(user.id);
+   check(scheduleCapacityAllows(limit?.capacity??null,participants,user.id),limit?'SCHEDULE_FULL':'SCHEDULE_NOT_OPEN',409);
    const values={...data,departmentId:membership.id,employeeCode:employee.code,employeeName:employee.name,updatedAt:now()};
    if(method==='POST')await tx.insert(workSchedules).values({id,userId:user.id,...values,createdAt:now()});else await tx.update(workSchedules).set({...values,version:current.version+1}).where(eq(workSchedules.id,id));return {id};
   }),method==='POST'?201:200);

@@ -376,3 +376,5 @@
 @media(max-width:600px){.attendance-dialog{padding:1rem;max-height:94dvh}.attendance-fields{grid-template-columns:1fr}.attendance-page .page-heading{flex-wrap:wrap;gap:.75rem}.attendance-page .page-heading h1{font-size:1.35rem;overflow-wrap:anywhere}.attendance-toolbar>.btn,.attendance-supplement>.btn{font-size:.85rem;padding:.65rem .8rem}.attendance-table-scroll{max-height:65dvh}.attendance-table{font-size:.8rem}.attendance-table td{padding:.5rem}}
 
 .salary-settlement-fields{display:grid;gap:12px;min-width:0;margin:0;padding:0;border:0}
+
+.schedule-capacities{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:12px;margin:12px 0}.schedule-capacities article{padding:10px;border:1px solid var(--border);border-radius:8px}.schedule-capacities label{display:grid;gap:6px;min-width:0}.schedule-capacities input{width:100%;min-width:0}

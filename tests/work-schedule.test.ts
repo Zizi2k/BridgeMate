@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {scheduleWeek,addScheduleDays,plannedShift,scheduleOverlaps} from '../lib/work-schedule.ts';
+import {scheduleWeek,addScheduleDays,plannedShift,scheduleOverlaps,scheduleCapacityAllows,validScheduleCapacity} from '../lib/work-schedule.ts';
 const now=new Date('2026-11-26T00:00:00Z');
 const input={day:'2026-11-30',start:'08:00',end:'17:00',overnight:false,breakMinutes:60,note:'Lắp đặt tại công trình A'};
 test('week starts Monday, including Sunday and month/year boundaries',()=>{
@@ -20,4 +20,18 @@ test('rejects invalid dates, time intervals, notes and lunch durations',()=>{
 });
 test('overlap protection allows adjoining morning/afternoon shifts but rejects shared minutes',()=>{
  const row=plannedShift(input,now);assert.equal(scheduleOverlaps('2026-11-30T10:00:00.000Z','2026-11-30T12:00:00.000Z',[row]),false);assert.equal(scheduleOverlaps('2026-11-30T09:59:00.000Z','2026-11-30T12:00:00.000Z',[row]),true);assert.equal(scheduleOverlaps(row.start,row.end,[row]),true);
+});
+
+test('daily quota counts employees once and blocks unconfigured or full days',()=>{
+ assert.equal(scheduleCapacityAllows(null,[],'a'),false);
+ assert.equal(scheduleCapacityAllows(0,[],'a'),false);
+ assert.equal(scheduleCapacityAllows(2,['a'],'b'),true);
+ assert.equal(scheduleCapacityAllows(2,['a','a'],'b'),true);
+ assert.equal(scheduleCapacityAllows(2,['a','b'],'c'),false);
+ assert.equal(scheduleCapacityAllows(2,['a','b'],'a'),true);
+ assert.equal(scheduleCapacityAllows(null,['a'],'a'),true);
+});
+test('daily quota accepts only bounded whole headcounts',()=>{
+ for(const value of [0,1,10000])assert.equal(validScheduleCapacity(value),true);
+ for(const value of [-1,1.5,10001,NaN,Infinity,'2',null])assert.equal(validScheduleCapacity(value),false);
 });

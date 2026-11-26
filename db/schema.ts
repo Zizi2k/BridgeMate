@@ -115,3 +115,6 @@ export const attendanceImportBatches=mysqlTable('attendance_import_batches',{
 export const workSchedules=mysqlTable('work_schedules',{
  id:id().primaryKey(),userId:id('user_id').notNull().references(()=>users.id),departmentId:id('department_id').notNull(),employeeCode:varchar('employee_code',{length:32}).notNull(),employeeName:varchar('employee_name',{length:120}).notNull(),day:varchar('day',{length:10}).notNull(),start:iso('start').notNull(),end:iso('end').notNull(),overnight:int('overnight').notNull().default(0),breakMinutes:int('break_minutes').notNull().default(0),note:text('note').notNull(),version:int('version').notNull().default(1),deleted:int('deleted').notNull().default(0),createdAt:iso('created_at').notNull(),updatedAt:iso('updated_at').notNull(),
 },t=>[index('work_schedule_user_day').on(t.userId,t.day),index('work_schedule_department_day').on(t.departmentId,t.day)]);
+
+export const workScheduleCapacities=mysqlTable('work_schedule_capacities',{departmentId:id('department_id').notNull(),day:varchar('day',{length:10}).notNull(),capacity:int('capacity').notNull(),updatedBy:id('updated_by').notNull(),updatedAt:iso('updated_at').notNull()},t=>[primaryKey({columns:[t.departmentId,t.day]})]);
+export const workScheduleCapacityLock=mysqlTable('work_schedule_capacity_lock',{id:int('id').primaryKey()});

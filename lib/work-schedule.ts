@@ -16,3 +16,6 @@ export function plannedShift(body:Record<string,unknown>,currentTime=new Date())
  return {day,start:from,end:to,overnight:overnight?1:0,breakMinutes:breakMinutes as number,note,minutes};
 }
 export function scheduleOverlaps(start:string,end:string,rows:{start:string;end:string}[]){return rows.some(row=>Date.parse(start)<Date.parse(row.end)&&Date.parse(end)>Date.parse(row.start))}
+
+export function scheduleCapacityAllows(capacity:number|null,participants:Iterable<string>,userId:string){const ids=new Set(participants);return ids.has(userId)||(capacity!==null&&Number.isInteger(capacity)&&capacity>ids.size)}
+export function validScheduleCapacity(value:unknown):value is number{return typeof value==='number'&&Number.isInteger(value)&&value>=0&&value<=10000}
