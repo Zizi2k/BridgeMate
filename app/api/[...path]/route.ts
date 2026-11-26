@@ -378,7 +378,7 @@ async function handle(req:Request){
    ]);
    return ok({week,end:addScheduleDays(week,6),rows,employees:roster,capacityDepartmentId,registrationDepartmentId:currentDepartment?.departmentId||'',capacities:limits,capacityCounts:counts,canManageCapacity:ownerAdmin||departmentManager,viewerId:user.id,canViewDepartment:ownerAdmin||departmentManager,ownerAdmin,canRegister:!!assignment&&!!departmentContext?.active&&departmentContext.status==='approved'});
   }
-  if(path[1]==='capacity'&&path.length===2&&method==='PUT'){
+  if(path[1]==='capacity'&&path.length===2&&method==='PATCH'){
    check(ownerAdmin||departmentManager,'FORBIDDEN',403);
    const departmentId=str(body.departmentId,36);
    check(ownerAdmin||departmentId===currentDepartment?.departmentId,'FORBIDDEN',403);

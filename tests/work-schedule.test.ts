@@ -35,3 +35,12 @@ test('daily quota accepts only bounded whole headcounts',()=>{
  for(const value of [0,1,10000])assert.equal(validScheduleCapacity(value),true);
  for(const value of [-1,1.5,10001,NaN,Infinity,'2',null])assert.equal(validScheduleCapacity(value),false);
 });
+
+test('schedule requests handle empty and HTML error responses without raw JSON exceptions',async()=>{
+ const {readScheduleResponse}=await import('../lib/work-schedule-response.ts');
+ for(const body of ['', '<html>Gateway error</html>'])await assert.rejects(()=>readScheduleResponse(new Response(body,{status:405})),/HTTP 405/);
+ await assert.rejects(()=>readScheduleResponse(new Response('null')),/không hợp lệ/);
+ await assert.rejects(()=>readScheduleResponse(new Response('{}')),/không hợp lệ/);
+ assert.deepEqual(await readScheduleResponse(Response.json({data:{saved:true}})),{data:{saved:true}});
+ assert.deepEqual(await readScheduleResponse(Response.json({error:{code:'FORBIDDEN'}},{status:403})),{error:{code:'FORBIDDEN'}});
+});
