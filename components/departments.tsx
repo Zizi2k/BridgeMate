@@ -1,7 +1,7 @@
 'use client';
 import {actionFetch} from '../lib/action-feedback';
 import DailyWork from './daily-work';
-import {useEffect,useState} from 'react';
+import {useEffect,useState,useRef} from 'react';
 import PrintPayroll from './print-payroll';
 import SalarySettlement from './salary-settlement';
 import {groupPayrollReport,payrollReportKey,payrollIdentityKey,type PayrollReportRow} from '../lib/payroll-report';
@@ -36,7 +36,8 @@ export default function DepartmentPayroll({ownerAdmin}:{ownerAdmin:boolean}){
  const [result,setResult]=useState<any>(null),[error,setError]=useState(''),[slip,setSlip]=useState<any>(null);
  function filters(){return new URLSearchParams({...range==='year'?{year}:{period},q,departmentId})}
  useEffect(()=>{if(ownerAdmin)departmentRequest('departments').then(setDepartments).catch(e=>setError(e.message))},[ownerAdmin]);
- useEffect(()=>{let active=true;setResult(null);setError('');const timer=setTimeout(()=>{departmentRequest('department-payroll?'+filters()).then(data=>{if(active)setResult(data)}).catch(e=>{if(active)setError(e.message)})},250);return()=>{active=false;clearTimeout(timer)}},[period,q,departmentId,range,year,revision]);
+ const loadedFilters=useRef('');
+ useEffect(()=>{let active=true;const key=filters().toString();if(loadedFilters.current!==key){setResult(null);loadedFilters.current=key}setError('');const timer=setTimeout(()=>{departmentRequest('department-payroll?'+filters()).then(data=>{if(active)setResult(data)}).catch(e=>{if(active)setError(e.message)})},250);return()=>{active=false;clearTimeout(timer)}},[period,q,departmentId,range,year,revision]);
  async function download(format:'xlsx'|'pdf',selectedKind:'ledger'|'slips'|'arrears'=kind,row?:PayrollReportRow){
   setExporting(true);setError('');
   try{

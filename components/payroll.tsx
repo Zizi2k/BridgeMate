@@ -2,7 +2,7 @@
 import {actionFetch} from '../lib/action-feedback';
 import ModuleGate from './module-gate';
 import PrintPayroll from './print-payroll';
-import {useEffect,useState,type FormEvent} from 'react';
+import {useEffect,useState,useRef,type FormEvent} from 'react';
 import {payrollData,payrollByWorker,payrollEntryWorkerKey,summarizePayslip} from '../lib/payroll';
 import styles from './payroll.module.css';
 
@@ -44,9 +44,10 @@ function PayrollLedger({lang,actualScope,recipients}:{lang:string;actualScope:st
  const [rows,setRows]=useState<Entry[]>([]),[edit,setEdit]=useState<Entry|null>(null);
  const [mode,setMode]=useState<'hour'|'month'>('hour'),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(false),[revision,reload]=useState(0);
 
+ const loadedScope=useRef('');
  useEffect(()=>{
   let active=true;
-  setRows([]);setLoading(true);setEdit(null);setError(false);
+  if(loadedScope.current!==actualScope){setRows([]);setLoading(true);setEdit(null);loadedScope.current=actualScope}setError(false);
   request(actualScope).then(data=>{if(active)setRows(data)}).catch(()=>{if(active)setError(true)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false};
  },[actualScope,revision]);

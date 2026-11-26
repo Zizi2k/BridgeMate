@@ -33,7 +33,7 @@ export default function Attendance(){
  async function load(){setData(await api('?period='+period))}
  useEffect(()=>{setData(null);setPreview(null);api('?period='+period).then(setData).catch(e=>setMessage(e.message))},[period]);
  async function run(action:()=>Promise<void>){setBusy(true);setMessage('');try{await action();setPreview(null)}catch(e:any){setMessage(e.message)}finally{try{await load()}catch{}setBusy(false)}}
- useEffect(()=>{const self=data?.employees.find((employee:any)=>employee.userId===data.currentUserId);if(self){setCode(self.code);setName(self.name)}},[data?.currentUserId,data?.employees]);
+ useEffect(()=>{const self=data?.employees.find((employee:any)=>employee.userId===data.currentUserId);if(self){setCode(self.code);setName(self.name)}},[data?.currentUserId]);
  const employee=(id:string)=>data?.employees.find((e:any)=>e.userId===id);
  const hours=(row:any)=>row.end?monthMinutes(row.day,row.start,row.end,period,row.breakMinutes??0)/60:0;
  return <section className="attendance-page"><div className="page-heading"><h1>Chấm công{data?.departmentName?' · '+data.departmentName:''}</h1><label>Tháng <input type="month" value={period} onChange={e=>setPeriod(e.target.value)}/></label></div>
@@ -49,7 +49,7 @@ export default function Attendance(){
  <datalist id="lunch-hours">{[0,0.5,1,1.5,2].map(value=><option key={value} value={value}/>)}</datalist>
  {message&&<p role="status">{message}</p>}
  <p>Chấm vào và chấm ra đều cần ảnh riêng và vị trí hiện tại. Trình duyệt chỉ lấy vị trí khi bạn bấm chấm công; không theo dõi liên tục.</p>
- {[clockAction].map(action=><button key={action} className="btn" disabled={busy||photoPreparing||!name.trim()||!code.trim()||!files.length||(kind==='other'&&(!workLabel.trim()||!workReason.trim()))} onClick={event=>{if(!event.currentTarget.form?.reportValidity())return;void run(async()=>{setMessage('Đang lấy vị trí và chuẩn bị ảnh…');const photo=await evidencePayload(files[0]);const location=await currentClockLocation();await api('/clock',{code,name,action,kind,workLabel,workReason,breakMinutes:Math.round(breakHours*60),photo,location});setClockAction(null);setFiles([]);setFileRevision(value=>value+1);if(action==='out'){setWorkLabel('');setWorkReason('');if(kind==='other')setBreakHours(0)}setMessage('Đã ghi nhận '+(action==='in'?'giờ vào':'giờ ra')+' cùng ảnh và vị trí hiện tại.')})}}>{action==='in'?'Chấm giờ vào':'Chấm giờ ra'}</button>)}
+ {[clockAction].map(action=><button type="button" key={action} className="btn" disabled={busy||photoPreparing||!name.trim()||!code.trim()||!files.length||(kind==='other'&&(!workLabel.trim()||!workReason.trim()))} onClick={event=>{if(!event.currentTarget.form?.reportValidity())return;void run(async()=>{setMessage('Đang lấy vị trí và chuẩn bị ảnh…');const photo=await evidencePayload(files[0]);const location=await currentClockLocation();await api('/clock',{code,name,action,kind,workLabel,workReason,breakMinutes:Math.round(breakHours*60),photo,location});setClockAction(null);setFiles([]);setFileRevision(value=>value+1);if(action==='out'){setWorkLabel('');setWorkReason('');if(kind==='other')setBreakHours(0)}setMessage('Đã ghi nhận '+(action==='in'?'giờ vào':'giờ ra')+' cùng ảnh và vị trí hiện tại.')})}}>{action==='in'?'Chấm giờ vào':'Chấm giờ ra'}</button>)}
  </form></AttendanceDialog>}
  <DailyWork period={period}/>
  {message&&<p role="status">{message}</p>}
