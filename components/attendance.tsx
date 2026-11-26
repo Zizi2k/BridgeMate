@@ -35,11 +35,6 @@ export default function Attendance(){
  const hours=(row:any)=>row.end?monthMinutes(row.day,row.start,row.end,period,row.breakMinutes??0)/60:0;
  return <section className="attendance-page"><div className="page-heading"><h1>Chấm công{data?.departmentName?' · '+data.departmentName:''}</h1><label>Tháng <input type="month" value={period} onChange={e=>setPeriod(e.target.value)}/></label></div>
  <div className="attendance-toolbar"><button type="button" className="btn primary" disabled={!data||busy||!!data.activeShift} onClick={()=>{setFiles([]);setClockAction('in')}}>Chấm công vào</button><button type="button" className="btn" disabled={!data||busy||!data.activeShift} onClick={()=>{setFiles([]);setClockAction('out')}}>Chấm công ra</button>{data?.admin&&<AttendanceSupplement employees={data.employees} busy={busy} onSave={async body=>{setBusy(true);try{await api('/supplement',body);await load();setMessage('Đã lưu chấm công bổ sung.')}finally{setBusy(false)}}}/>} </div>
- <details className="attendance-help"><summary>Hướng dẫn chấm công</summary> <p>Giờ tính công: vào trễ tối đa 10 phút sau mốc :00/:30 được lùi về mốc; ra sớm tối đa 10 phút trước mốc :00/:30 được tiến đến mốc. Giờ thực tế được giữ nguyên để đối chiếu. Tổng giờ công = giờ ra đã làm tròn − giờ vào đã làm tròn − giờ nghỉ trưa. Có thể nhập 0; 0,5; 1; 1,5 giờ hoặc thời lượng khác theo bước 15 phút.</p>
- <p>Ca đang mở dành một chỗ cho ảnh chấm ra: tối đa 9 ảnh trước khi chấm ra, 10 ảnh cho cả ca.</p>
- <p>Ảnh minh chứng tự xóa sau 2 tháng kể từ ngày tải lên. Định dạng không xem trực tiếp được có thể tải về.</p>
- <p>Giờ Việt Nam (UTC+7). Giờ vào/ra lấy từ hệ thống. Nhập mã và tên do admin cấp.</p>
-</details>
  {clockAction&&<AttendanceDialog title={clockAction==='in'?'Chấm công vào':'Chấm công ra'} busy={busy||photoPreparing} onClose={()=>setClockAction(null)}>
  <form className="attendance-form" onSubmit={e=>e.preventDefault()}>
  <label>Loại chấm công <select value={kind} disabled={busy||!!data?.activeShift} onChange={event=>{const value=event.target.value as 'regular'|'other';setKind(value);if(value==='other')setBreakHours(0)}}><option value="regular">Chấm công thường</option><option value="other">Chấm công khác / ngoài giờ</option></select></label>
@@ -56,7 +51,7 @@ export default function Attendance(){
  <DailyWork period={period}/>
  {message&&<p role="status">{message}</p>}
  {!data?<p>Đang tải…</p>:<>
- {data.ownerAdmin&&data.mailConfigured===false&&<p role="status">Thông báo email chưa được kích hoạt. Cần cấu hình địa chỉ gửi mail chung và khóa dịch vụ gửi mail trên máy chủ. Email nhân viên được dùng làm địa chỉ trả lời.</p>}
+
  {data.ownerAdmin&&<AttendanceImport onImported={load}/>}
  {data.admin&&<AttendanceReport period={period} ownerAdmin={data.ownerAdmin}/>}
 

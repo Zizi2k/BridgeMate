@@ -37,7 +37,7 @@ import {validateProfile,ProfileError} from '../../../lib/profile';
 import {generateAI,validateAIInput,AIError,getAIConfig} from '../../../lib/ai';
 import {getDb} from '../../../db';
 import {users,sessions,teams,members,tasks,understandings,comments,attempts,aiUsage,profiles,phraseEntries,practiceEntries,leaderVotes,taskCollaborators,subtasks,taskCompletions,personalEntries,accountAccess,payrollEntries,moduleApprovals,printSettings,removedAccounts,aptisChallenges,employeeAssignments,attendanceEntries,attendanceAudit,departments,accountDepartments,attendancePhotos,evidenceChangeRequests,salaryPayments,salaryPaymentBatches,attendanceNotifications,passwordRecovery,attendanceImportBatches,workSchedules} from '../../../db/schema';
-import {like,and,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
+import {like,and,or,eq,gt,desc,sql,inArray,isNull} from 'drizzle-orm';
 import {phrases,categories,questions} from '../../../lib/content';
 import {canEdit,taskChanged,scoreAnswers} from '../../../lib/policy';
 export const dynamic='force-dynamic';
@@ -128,9 +128,11 @@ async function handle(req:Request){
    });
  }
  const ownerAdmin=accountRole(user)==='admin';
- const [assignment]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id));
+ const [[assignment],[currentDepartment]]=await Promise.all([
+  db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,user.id)),
+  db.select({departmentId:departments.id,status:accountDepartments.status,active:departments.active}).from(accountDepartments).innerJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(eq(accountDepartments.userId,user.id)),
+ ]);
  const admin=ownerAdmin;
- const [currentDepartment]=await db.select({departmentId:departments.id,status:accountDepartments.status,active:departments.active}).from(accountDepartments).innerJoin(departments,eq(departments.id,accountDepartments.departmentId)).where(eq(accountDepartments.userId,user.id));
  const departmentContext=currentDepartment?{...currentDepartment,active:!!currentDepartment.active}:null;
  const departmentManager=!!assignment?.manager&&!!departmentContext?.active&&departmentContext.status==='approved';
  async function employeeDepartment(id:string){return (await db.select({departmentId:accountDepartments.departmentId}).from(accountDepartments).innerJoin(departments,and(eq(departments.id,accountDepartments.departmentId),eq(departments.active,1))).where(and(eq(accountDepartments.userId,id),eq(accountDepartments.status,'approved'))).limit(1))[0]?.departmentId}
@@ -275,10 +277,13 @@ async function handle(req:Request){
   )).limit(1);
   check(unlocked,'APTIS_REQUIRED',403);
  }
- const visibility=async()=>{
+ let visibilityPromise:Promise<Record<string,boolean>>|undefined;
+ const visibility=()=>visibilityPromise??=(async()=>{
   const rows=await db.select().from(printSettings).where(inArray(printSettings.id,[...restrictedModules,'payroll'].map(module=>'visibility-'+module)));
   return Object.fromEntries([...restrictedModules,'payroll'].map(module=>[module,rows.some(row=>row.id==='visibility-'+module&&row.data===true)]));
- };
+ })();
+ let permissionPromise:Promise<{module:string;status:string}[]>|undefined;
+ const permissionRows=()=>permissionPromise??=db.select({module:moduleApprovals.module,status:moduleApprovals.status}).from(moduleApprovals).where(eq(moduleApprovals.userId,user.id)).then(rows=>rows);
  const hidden=async(module:Module)=>(await visibility())[module.startsWith('payroll-')?'payroll':module];
  if(path[0]==='module-visibility'&&path.length===1){
   if(method==='GET')return ok(await visibility());
@@ -293,12 +298,12 @@ async function handle(req:Request){
  }
  const approved=async (module:Module)=>{
   if(ownerAdmin||admin&&module.startsWith('payroll-'))return true;
-  const status=(await db.select({status:moduleApprovals.status}).from(moduleApprovals).where(and(eq(moduleApprovals.userId,user.id),eq(moduleApprovals.module,module))).limit(1))[0]?.status;
+  const status=(await permissionRows()).find(row=>row.module===module)?.status;
   return canAccessModule(module,{ownerAdmin,manager:admin,demo:!!user.demo,hidden:await hidden(module),status:status as 'pending'|'approved'|'denied'|undefined});
  };
  if(path[0]==='access'&&path.length===1){
   if(method==='GET'){
-   const rows=await db.select({module:moduleApprovals.module,status:moduleApprovals.status}).from(moduleApprovals).where(eq(moduleApprovals.userId,user.id));
+   const rows=await permissionRows();
    return ok({admin:ownerAdmin,manager:false,permissions:Object.fromEntries(rows.map(row=>[row.module,row.status])),allowed:Object.fromEntries(await Promise.all(restrictedModules.map(async module=>[module,await approved(module)])))});
   }
   if(method==='POST'){
@@ -700,14 +705,18 @@ async function handle(req:Request){
   const period=url.searchParams.get('period')||localDay().slice(0,7);
   check(payPeriodPattern.test(period));
   if(method==='GET'&&!path[1]){
-   await purgeAttendancePhotos();
-   await closeAttendanceMonths();
+   // Cleanup and monthly closing run in the authenticated daily cron, not on page reads.
    const permitted=departmentManager?await departmentEmployeeIds():[user.id];
    const ids=permitted.length?permitted:[user.id];
-   const rows=await db.select().from(attendanceEntries).where(ownerAdmin?undefined:inArray(attendanceEntries.userId,ids));
-   const employees=await db.select().from(employeeAssignments).where(ownerAdmin?undefined:inArray(employeeAssignments.userId,ids));
+   const scope=ownerAdmin?undefined:inArray(attendanceEntries.userId,ids);
+   const inMonth=and(sql`${attendanceEntries.day} >= ${period+'-01'}`,sql`${attendanceEntries.day} < ${period+'-32'}`);
+   const [rows,employees,department]=await Promise.all([
+    db.select().from(attendanceEntries).where(and(scope,or(inMonth,and(eq(attendanceEntries.userId,user.id),isNull(attendanceEntries.end))))),
+    db.select().from(employeeAssignments).where(ownerAdmin?undefined:inArray(employeeAssignments.userId,ids)),
+    currentDepartment?db.select({name:departments.name}).from(departments).where(eq(departments.id,currentDepartment.departmentId)):Promise.resolve([]),
+   ]);
    const pendingPhotos=rows.length?await db.select({entryId:attendancePhotos.entryId}).from(evidenceChangeRequests).innerJoin(attendancePhotos,eq(attendancePhotos.id,evidenceChangeRequests.photoId)).where(and(eq(evidenceChangeRequests.status,'pending'),gt(attendancePhotos.expiresAt,now()),inArray(attendancePhotos.entryId,rows.map(row=>row.id)))):[];
-   return ok({mailConfigured:ownerAdmin?attendanceMailConfigured():undefined,photoChangeEntryIds:[...new Set(pendingPhotos.map(row=>row.entryId))],rows:rows.filter(row=>row.day.startsWith(period)),employees,currentUserId:user.id,admin:ownerAdmin||departmentManager,ownerAdmin,departmentName:currentDepartment?((await db.select().from(departments).where(eq(departments.id,currentDepartment.departmentId)))[0]?.name):null,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
+   return ok({mailConfigured:ownerAdmin?attendanceMailConfigured():undefined,photoChangeEntryIds:[...new Set(pendingPhotos.map(row=>row.entryId))],rows:rows.filter(row=>row.day.startsWith(period)),employees,currentUserId:user.id,admin:ownerAdmin||departmentManager,ownerAdmin,departmentName:department[0]?.name||null,activeShift:rows.find(row=>row.userId===user.id&&!row.end)||null});
   }
   if(path[1]==='preview'||path[1]==='sync'){
    check(ownerAdmin||departmentManager,'FORBIDDEN',403);check(method==='POST');
