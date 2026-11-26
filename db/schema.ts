@@ -1,7 +1,7 @@
 import {mysqlTable,varchar,text,mediumtext,int,bigint,uniqueIndex,index,primaryKey,json} from 'drizzle-orm/mysql-core';
 const id=(name='id')=>varchar(name,{length:36});
 const iso=(name:string)=>varchar(name,{length:32});
-export const users=mysqlTable('users',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),email:varchar('email',{length:254}).notNull().unique(),password:varchar('password',{length:255}).notNull(),demo:int('demo').notNull().default(0),mustChangePassword:int('must_change_password').notNull().default(0)});
+export const users=mysqlTable('users',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),email:varchar('email',{length:254}).notNull().unique(),password:varchar('password',{length:255}).notNull(),demo:int('demo').notNull().default(0),mustChangePassword:int('must_change_password').notNull().default(0),emailVerifiedAt:iso('email_verified_at')});
 export const sessions=mysqlTable('sessions',{id:varchar('id',{length:64}).primaryKey(),userId:id('user_id').notNull().references(()=>users.id),expires:bigint('expires',{mode:'number'}).notNull()},t=>[index('sessions_user_index').on(t.userId),index('sessions_expiry_index').on(t.expires)]);
 export const teams=mysqlTable('teams',{id:id().primaryKey(),name:varchar('name',{length:80}).notNull(),description:text('description').notNull(),website:varchar('website',{length:2048}).notNull().default(''),ownerId:id('owner_id').notNull().references(()=>users.id),leaderId:id('leader_id').references(()=>users.id),deleted:int('deleted').notNull().default(0),invite:varchar('invite',{length:32}).notNull().unique()});
 export const members=mysqlTable('members',{id:id().primaryKey(),teamId:id('team_id').notNull().references(()=>teams.id),userId:id('user_id').notNull().references(()=>users.id),role:varchar('role',{length:16}).notNull()},t=>[uniqueIndex('members_team_user_unique').on(t.teamId,t.userId)]);
@@ -118,3 +118,6 @@ export const workSchedules=mysqlTable('work_schedules',{
 
 export const workScheduleCapacities=mysqlTable('work_schedule_capacities',{departmentId:id('department_id').notNull(),day:varchar('day',{length:10}).notNull(),capacity:int('capacity').notNull(),updatedBy:id('updated_by').notNull(),updatedAt:iso('updated_at').notNull()},t=>[primaryKey({columns:[t.departmentId,t.day]})]);
 export const workScheduleCapacityLock=mysqlTable('work_schedule_capacity_lock',{id:int('id').primaryKey()});
+
+export const emailVerifications=mysqlTable('email_verifications',{email:varchar('email',{length:254}).primaryKey(),name:varchar('name',{length:80}).notNull(),password:varchar('password',{length:255}).notNull(),tokenHash:varchar('token_hash',{length:64}).notNull().unique(),expires:bigint('expires',{mode:'number'}).notNull(),sentAt:bigint('sent_at',{mode:'number'}).notNull(),windowStart:bigint('window_start',{mode:'number'}).notNull(),sends:int('sends').notNull().default(0)});
+export const emailVerificationLimits=mysqlTable('email_verification_limits',{id:varchar('id',{length:64}).primaryKey(),windowStart:bigint('window_start',{mode:'number'}).notNull(),requests:int('requests').notNull()});

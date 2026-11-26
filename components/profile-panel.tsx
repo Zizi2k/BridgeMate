@@ -1,4 +1,5 @@
 'use client';
+import ChangePassword from './change-password';
 import {actionFetch} from '../lib/action-feedback';
 
 import {useEffect,useRef,useState,type ChangeEvent,type FormEvent} from 'react';
@@ -27,7 +28,7 @@ async function prepareAvatar(file:File):Promise<string>{
   if(result.length>160000)throw new Error('PROFILE_IMAGE_INVALID');return result;
  }finally{URL.revokeObjectURL(url);}
 }
-export default function ProfilePanel({userId,viewerId,lang,onSaved}:{userId:string;viewerId:string;lang:string;onSaved:(profile:Profile)=>void}){
+export default function ProfilePanel({userId,viewerId,lang,onSaved,allowPasswordChange=true}:{userId:string;viewerId:string;lang:string;allowPasswordChange?:boolean;onSaved:(profile:Profile)=>void}){
  const [profile,setProfile]=useState<Profile|null>(null),[draft,setDraft]=useState<Profile>(empty),[editing,setEditing]=useState(false),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[uploading,setUploading]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false),[interests,setInterests]=useState('');
  const fileInput=useRef<HTMLInputElement>(null),own=userId===viewerId;
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
@@ -62,5 +63,6 @@ export default function ProfilePanel({userId,viewerId,lang,onSaved}:{userId:stri
    <section><h3>{t('Connect with me','Kết nối với tôi')}</h3><div className="profile-social-links">{shown.socials.length?shown.socials.map((s,i)=><a key={i} href={s.url} target="_blank" rel="noopener noreferrer"><span>{s.platform}</span><ExternalLink size={15}/></a>):<p className="muted">{t('No social links added yet.','Chưa thêm mạng xã hội.')}</p>}</div></section>
    <div className="profile-footer"><small className="muted">{t('Visible to teammates','Hiển thị với thành viên cùng nhóm')}{shown.updatedAt?' · '+new Date(shown.updatedAt).toLocaleDateString(lang==='vi'?'vi-VN':'en-GB'):''}</small>{own&&<button className="btn primary" onClick={()=>{setEditing(true);setSaved(false);setError('');}}><Camera size={16}/>{t('Edit profile','Chỉnh sửa hồ sơ')}</button>}</div>
   </div>}
+  {own&&allowPasswordChange&&<ChangePassword lang={lang}/>}
  </div>;
 }
