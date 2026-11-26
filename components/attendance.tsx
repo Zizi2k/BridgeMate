@@ -1,4 +1,6 @@
 'use client';
+import AttendanceDialog from './attendance-dialog';
+import EmployeePicker from './employee-picker';
 import AttendancePhotoPicker from './attendance-photo-picker';
 import AttendanceImport from './attendance-import';
 import AttendanceReport from './attendance-report';
@@ -17,6 +19,8 @@ const time=(value:string|null)=>value?new Date(value).toLocaleString('vi-VN',{ti
 const inputTime=(value:string)=>{const date=new Date(Date.parse(value)+7*3600000);return date.toISOString().slice(0,16)};
 export default function Attendance(){
  const [period,setPeriod]=useState(month),[data,setData]=useState<any>(null),[code,setCode]=useState(''),[name,setName]=useState('');
+ const [clockAction,setClockAction]=useState<'in'|'out'|null>(null),[visibleCount,setVisibleCount]=useState(10);
+ useEffect(()=>setVisibleCount(10),[period]);
  const [photoPreparing,setPhotoPreparing]=useState(false);
  const [files,setFiles]=useState<File[]>([]),[fileRevision,setFileRevision]=useState(0);
  const [breakHours,setBreakHours]=useState(0);
@@ -26,38 +30,43 @@ export default function Attendance(){
  async function load(){setData(await api('?period='+period))}
  useEffect(()=>{setData(null);setPreview(null);api('?period='+period).then(setData).catch(e=>setMessage(e.message))},[period]);
  async function run(action:()=>Promise<void>){setBusy(true);setMessage('');try{await action();setPreview(null)}catch(e:any){setMessage(e.message)}finally{try{await load()}catch{}setBusy(false)}}
+ useEffect(()=>{const self=data?.employees.find((employee:any)=>employee.userId===data.currentUserId);if(self){setCode(self.code);setName(self.name)}},[data?.currentUserId,data?.employees]);
  const employee=(id:string)=>data?.employees.find((e:any)=>e.userId===id);
  const hours=(row:any)=>row.end?monthMinutes(row.day,row.start,row.end,period,row.breakMinutes??0)/60:0;
- return <section><div className="page-heading"><h1>Chấm công{data?.departmentName?' · '+data.departmentName:''}</h1><label>Tháng <input type="month" value={period} onChange={e=>setPeriod(e.target.value)}/></label></div>
- <p>Giờ tính công: vào trễ tối đa 10 phút sau mốc :00/:30 được lùi về mốc; ra sớm tối đa 10 phút trước mốc :00/:30 được tiến đến mốc. Giờ thực tế được giữ nguyên để đối chiếu. Tổng giờ công = giờ ra đã làm tròn − giờ vào đã làm tròn − giờ nghỉ trưa. Có thể nhập 0; 0,5; 1; 1,5 giờ hoặc thời lượng khác theo bước 15 phút.</p>
+ return <section className="attendance-page"><div className="page-heading"><h1>Chấm công{data?.departmentName?' · '+data.departmentName:''}</h1><label>Tháng <input type="month" value={period} onChange={e=>setPeriod(e.target.value)}/></label></div>
+ <div className="attendance-toolbar"><button type="button" className="btn primary" disabled={!data||busy||!!data.activeShift} onClick={()=>{setFiles([]);setClockAction('in')}}>Chấm công vào</button><button type="button" className="btn" disabled={!data||busy||!data.activeShift} onClick={()=>{setFiles([]);setClockAction('out')}}>Chấm công ra</button>{data?.admin&&<AttendanceSupplement employees={data.employees} busy={busy} onSave={async body=>{setBusy(true);try{await api('/supplement',body);await load();setMessage('Đã lưu chấm công bổ sung.')}finally{setBusy(false)}}}/>} </div>
+ <details className="attendance-help"><summary>Hướng dẫn chấm công</summary> <p>Giờ tính công: vào trễ tối đa 10 phút sau mốc :00/:30 được lùi về mốc; ra sớm tối đa 10 phút trước mốc :00/:30 được tiến đến mốc. Giờ thực tế được giữ nguyên để đối chiếu. Tổng giờ công = giờ ra đã làm tròn − giờ vào đã làm tròn − giờ nghỉ trưa. Có thể nhập 0; 0,5; 1; 1,5 giờ hoặc thời lượng khác theo bước 15 phút.</p>
  <p>Ca đang mở dành một chỗ cho ảnh chấm ra: tối đa 9 ảnh trước khi chấm ra, 10 ảnh cho cả ca.</p>
  <p>Ảnh minh chứng tự xóa sau 2 tháng kể từ ngày tải lên. Định dạng không xem trực tiếp được có thể tải về.</p>
  <p>Giờ Việt Nam (UTC+7). Giờ vào/ra lấy từ hệ thống. Nhập mã và tên do admin cấp.</p>
- <form className="review-card" onSubmit={e=>e.preventDefault()} style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+</details>
+ {clockAction&&<AttendanceDialog title={clockAction==='in'?'Chấm công vào':'Chấm công ra'} busy={busy||photoPreparing} onClose={()=>setClockAction(null)}>
+ <form className="attendance-form" onSubmit={e=>e.preventDefault()}>
  <label>Loại chấm công <select value={kind} disabled={busy||!!data?.activeShift} onChange={event=>{const value=event.target.value as 'regular'|'other';setKind(value);if(value==='other')setBreakHours(0)}}><option value="regular">Chấm công thường</option><option value="other">Chấm công khác / ngoài giờ</option></select></label>
  {kind==='other'&&<><label>Tên công việc khác <input required maxLength={180} value={workLabel} disabled={busy||!!data?.activeShift} onChange={event=>setWorkLabel(event.target.value)}/></label><label>Lý do làm ngoài giờ / ghi chú <textarea required maxLength={1000} value={workReason} disabled={busy||!!data?.activeShift} onChange={event=>setWorkReason(event.target.value)}/></label><p>Được chấm thêm nhiều ca trong ngày, không chồng giờ. Đơn giá mặc định theo admin cấp; quản lý/admin xử lý đơn giá riêng trong phần công việc.</p></>}
- <label>Mã nhân viên <input required value={code} onChange={e=>setCode(e.target.value)} maxLength={32}/></label>
- <label>Tên nhân viên <input required value={name} onChange={e=>setName(e.target.value)} maxLength={120}/></label>
+ <EmployeePicker employees={(data?.employees||[]).filter((employee:any)=>employee.userId===data.currentUserId)} value={code&&name?data?.currentUserId:''} disabled={busy} onChange={employee=>{setCode(employee?.code||'');setName(employee?.name||'')}}/>
+ <small>Chấm công trực tiếp cho tài khoản của bạn. Quản lý dùng Chấm công bổ sung để ghi nhận cho nhân viên.</small>
  <label>Nghỉ trưa (giờ) <input type="number" min={0} max={24} step={0.25} list="lunch-hours" value={breakHours} onChange={e=>setBreakHours(Number(e.target.value))}/></label>
  <AttendancePhotoPicker key={fileRevision} files={files} onChange={setFiles} disabled={busy} onPreparingChange={setPhotoPreparing} label="Ảnh cho lần chấm vào/ra này (bắt buộc)"/>
  <datalist id="lunch-hours">{[0,0.5,1,1.5,2].map(value=><option key={value} value={value}/>)}</datalist>
+ {message&&<p role="status">{message}</p>}
  <p>Chấm vào và chấm ra đều cần ảnh riêng và vị trí hiện tại. Trình duyệt chỉ lấy vị trí khi bạn bấm chấm công; không theo dõi liên tục.</p>
- {['in','out'].map(action=><button key={action} className="btn" disabled={busy||photoPreparing||!name.trim()||!code.trim()||!files.length||(kind==='other'&&(!workLabel.trim()||!workReason.trim()))} onClick={()=>void run(async()=>{setMessage('Đang lấy vị trí và chuẩn bị ảnh…');const photo=await evidencePayload(files[0]);const location=await currentClockLocation();await api('/clock',{code,name,action,kind,workLabel,workReason,breakMinutes:Math.round(breakHours*60),photo,location});setFiles([]);setFileRevision(value=>value+1);if(action==='out'){setWorkLabel('');setWorkReason('');if(kind==='other')setBreakHours(0)}setMessage('Đã ghi nhận '+(action==='in'?'giờ vào':'giờ ra')+' cùng ảnh và vị trí hiện tại.')})}>{action==='in'?'Chấm giờ vào':'Chấm giờ ra'}</button>)}
- </form>
+ {[clockAction].map(action=><button key={action} className="btn" disabled={busy||photoPreparing||!name.trim()||!code.trim()||!files.length||(kind==='other'&&(!workLabel.trim()||!workReason.trim()))} onClick={event=>{if(!event.currentTarget.form?.reportValidity())return;void run(async()=>{setMessage('Đang lấy vị trí và chuẩn bị ảnh…');const photo=await evidencePayload(files[0]);const location=await currentClockLocation();await api('/clock',{code,name,action,kind,workLabel,workReason,breakMinutes:Math.round(breakHours*60),photo,location});setClockAction(null);setFiles([]);setFileRevision(value=>value+1);if(action==='out'){setWorkLabel('');setWorkReason('');if(kind==='other')setBreakHours(0)}setMessage('Đã ghi nhận '+(action==='in'?'giờ vào':'giờ ra')+' cùng ảnh và vị trí hiện tại.')})}}>{action==='in'?'Chấm giờ vào':'Chấm giờ ra'}</button>)}
+ </form></AttendanceDialog>}
  <DailyWork period={period}/>
  {message&&<p role="status">{message}</p>}
  {!data?<p>Đang tải…</p>:<>
  {data.ownerAdmin&&data.mailConfigured===false&&<p role="status">Thông báo email chưa được kích hoạt. Cần cấu hình địa chỉ gửi mail chung và khóa dịch vụ gửi mail trên máy chủ. Email nhân viên được dùng làm địa chỉ trả lời.</p>}
  {data.ownerAdmin&&<AttendanceImport onImported={load}/>}
  {data.admin&&<AttendanceReport period={period} ownerAdmin={data.ownerAdmin}/>}
- {data.admin&&<AttendanceSupplement employees={data.employees} busy={busy} onSave={body=>run(async()=>{await api('/supplement',body);setMessage('Đã lưu chấm công bổ sung. Chọn đúng tháng trong bộ lọc để xem bản ghi.')})}/>}
+
  <p><strong>Tổng giờ tháng: {data.rows.reduce((sum:number,row:any)=>sum+hours(row),0).toFixed(2)} giờ</strong> · {data.rows.filter((row:any)=>!row.end).length} ca chưa có giờ ra</p>
- <div style={{overflowX:'auto'}}><table style={{width:'100%',minWidth:700,textAlign:'left'}}><thead><tr>{['Ngày','Mã NV','Nhân viên','Giờ vào','Giờ ra','Nghỉ trưa (giờ)','Giờ thực làm','Thao tác'].map(label=><th key={label}>{label}</th>)}</tr></thead>
- <tbody>{[...data.rows].sort((a:any,b:any)=>b.day.localeCompare(a.day)||a.start.localeCompare(b.start)).map((row:any)=><tr key={row.id}>
+ <div className="attendance-table-scroll" tabIndex={0} aria-label="Danh sách chấm công, cuộn để xem thêm" onScroll={event=>{const el=event.currentTarget;if(el.scrollHeight-el.scrollTop-el.clientHeight<80)setVisibleCount(count=>Math.min(data.rows.length,count+10))}}><table className="attendance-table"><thead><tr>{['Ngày','Mã NV','Nhân viên','Giờ vào','Giờ ra','Nghỉ trưa (giờ)','Giờ thực làm','Thao tác'].map(label=><th key={label}>{label}</th>)}</tr></thead>
+ <tbody>{[...data.rows].sort((a:any,b:any)=>b.day.localeCompare(a.day)||a.start.localeCompare(b.start)).slice(0,visibleCount).map((row:any)=><tr key={row.id}>
  <td>{row.day.split('-').reverse().join('/')}{row.kind==='other'&&<strong style={{display:'block'}}>Công khác / ngoài giờ: {row.workLabel}</strong>}{!!row.supplemented&&<small style={{display:'block'}}>Chấm công bổ sung</small>}</td><td>{employee(row.userId)?.code}</td><td>{employee(row.userId)?.name}</td><td>{time(row.start)}<ClockPosition point={row.locations?.in} label="Vị trí vào"/></td><td>{time(row.end)}<ClockPosition point={row.locations?.out} label="Vị trí ra"/></td><td>{((row.breakMinutes??0)/60).toFixed(2)}</td><td>{hours(row).toFixed(2)}</td>
- <td>{(data.admin||!!row.editable)&&<button className="btn" disabled={busy} onClick={()=>setEditing({...row,start:inputTime(row.start),end:row.end?inputTime(row.end):'',reason:''})}>Sửa</button>}
- {data.admin&&<button className="btn" disabled={busy} onClick={()=>void run(async()=>{await api('/'+row.id,{editable:!row.editable},'PATCH')})}>{row.editable?'Thu hồi quyền sửa':'Cho phép NV sửa 1 lần'}</button>}
- <AttendanceEvidence entryId={row.id} canUpload={data.ownerAdmin||row.userId===data.currentUserId&&(!row.end||Date.now()-Date.parse(row.end)<15*60000||!!row.editable||!!row.supplemented)} owns={row.userId===data.currentUserId} canAdminReplace={data.ownerAdmin} canRequestChange={data.ownerAdmin||data.admin&&row.userId!==data.currentUserId} changeRequested={data.photoChangeEntryIds?.includes(row.id)}/>{row.reason&&<small>Lý do: {row.reason}</small>}</td></tr>)}</tbody></table></div>
+ <td className="attendance-actions">{(data.admin||!!row.editable)&&<button className="btn" disabled={busy} onClick={()=>setEditing({...row,start:inputTime(row.start),end:row.end?inputTime(row.end):'',reason:''})}>Sửa</button>}
+ {data.admin&&<button className="btn" disabled={busy} onClick={()=>void run(async()=>{await api('/'+row.id,{editable:!row.editable},'PATCH')})}>{row.editable?'Thu hồi quyền sửa':'Cho sửa 1 lần'}</button>}
+ <AttendanceEvidence entryId={row.id} canUpload={data.ownerAdmin||row.userId===data.currentUserId&&(!row.end||Date.now()-Date.parse(row.end)<15*60000||!!row.editable||!!row.supplemented)} owns={row.userId===data.currentUserId} canAdminReplace={data.ownerAdmin} canRequestChange={data.ownerAdmin||data.admin&&row.userId!==data.currentUserId} changeRequested={data.photoChangeEntryIds?.includes(row.id)}/>{row.reason&&<small>Lý do: {row.reason}</small>}</td></tr>)}</tbody></table>{visibleCount<data.rows.length&&<button type="button" className="btn attendance-load-more" onClick={()=>setVisibleCount(count=>count+10)}>Xem thêm 10 dòng ({Math.min(visibleCount,data.rows.length)}/{data.rows.length})</button>}</div>
  {!data.rows.length&&<p>Chưa có chấm công trong tháng này.</p>}
  {data.admin&&<div className="review-card"><h2>Tổng giờ vào phiếu lương</h2><p>Giờ nghỉ trưa tự động được trừ trước khi tính lương. Ca chưa có giờ ra không được tính. Tổng hợp lại sẽ cập nhật cùng phiếu, giữ các khoản tạm ứng và hoa hồng.</p>
  <button className="btn" disabled={busy} onClick={()=>{setBusy(true);setMessage('');api('/preview?period='+period,{}).then(setPreview).catch(e=>setMessage(e.message)).finally(()=>setBusy(false))}}>Xem trước tổng giờ vào lương</button>
@@ -74,4 +83,4 @@ export default function Attendance(){
  </section>;
 }
 
-function ClockPosition({point,label}:{point:any;label:string}){return point?<small style={{display:'block'}}><a href={'https://www.google.com/maps?q='+encodeURIComponent(point.latitude+','+point.longitude)} target="_blank" rel="noopener noreferrer">{label}: {Number(point.latitude).toFixed(6)}, {Number(point.longitude).toFixed(6)}</a><br/>Sai số thiết bị: ±{Math.round(point.accuracy)} m</small>:<small style={{display:'block'}}>Chưa ghi vị trí (dữ liệu cũ/chấm bù)</small>}
+function ClockPosition({point,label}:{point:any;label:string}){return point?<details className="clock-position"><summary>{label}</summary><small><a href={'https://www.google.com/maps?q='+encodeURIComponent(point.latitude+','+point.longitude)} target="_blank" rel="noopener noreferrer">{label}: {Number(point.latitude).toFixed(6)}, {Number(point.longitude).toFixed(6)}</a><br/>Sai số thiết bị: ±{Math.round(point.accuracy)} m</small></details>:null}

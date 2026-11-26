@@ -1,0 +1,9 @@
+'use client';
+import {useId,useState} from 'react';
+export type AttendanceEmployee={userId:string;code:string;name:string};
+export default function EmployeePicker({employees,value,onChange,disabled=false}:{employees:AttendanceEmployee[];value:string;onChange:(employee:AttendanceEmployee|null)=>void;disabled?:boolean}){
+ const id=useId(),[query,setQuery]=useState<string|null>(null);
+ const selected=employees.find(employee=>employee.userId===value);
+ const label=(employee:AttendanceEmployee)=>employee.code+' · '+employee.name;
+ return <div className="employee-picker"><label>Tìm mã hoặc tên nhân viên<input type="search" required list={id} autoComplete="off" disabled={disabled} placeholder="Nhập mã hoặc tên, chọn gợi ý…" value={query??(selected?label(selected):'')} onChange={event=>{const text=event.target.value;setQuery(text);const matches=employees.filter(employee=>[label(employee),employee.code,employee.name].some(part=>part.toLocaleLowerCase('vi')===text.trim().toLocaleLowerCase('vi')));onChange(matches.length===1?matches[0]:null)}} onBlur={()=>{if(selected)setQuery(null)}}/><datalist id={id}>{employees.map(employee=><option key={employee.userId} value={label(employee)}/>)}</datalist></label><label>Hoặc chọn từ danh sách<select required disabled={disabled} value={value} onChange={event=>{setQuery(null);onChange(employees.find(employee=>employee.userId===event.target.value)||null)}}><option value="">Chọn nhân viên</option>{employees.map(employee=><option key={employee.userId} value={employee.userId}>{label(employee)}</option>)}</select></label><div className="attendance-fields"><label>Mã nhân viên<input value={selected?.code||''} readOnly placeholder="Chọn nhân viên có sẵn"/></label><label>Tên nhân viên<input value={selected?.name||''} readOnly placeholder="Tự điền theo mã"/></label></div>{!selected&&query&&<small role="status">Chọn đúng nhân viên trong gợi ý để tiếp tục.</small>}</div>;
+}

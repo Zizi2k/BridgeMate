@@ -340,3 +340,37 @@
 .pay-slip-bank-search button{width:100%;text-align:left;padding:.35rem;color:var(--heading);background:none;border:0;cursor:pointer}
 .pay-slip-bank-search button:hover,.pay-slip-bank-search button:focus-visible{background:var(--soft)}
 .pay-slip-bank-search button:disabled{opacity:.55;cursor:default}
+
+/* Attendance: compact actions, native dialogs and a bounded record list. */
+.attendance-page{min-width:0;max-width:100%}
+.attendance-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:.65rem;margin-bottom:1rem}
+.attendance-supplement{margin:0}
+.attendance-help{margin:.75rem 0 1rem;color:var(--muted);font-size:.875rem}
+.attendance-help summary{cursor:pointer;font-weight:600}
+.attendance-help p{margin:.65rem 0}
+.attendance-dialog{width:min(660px,calc(100vw - 24px));max-height:90dvh;overflow:auto;box-sizing:border-box;margin:auto;padding:1.25rem;border:1px solid var(--border);border-radius:16px;background:var(--surface,#fff);color:var(--heading,#173d42);box-shadow:0 24px 80px #0003}
+.attendance-dialog::backdrop{background:#102a35a6}
+.attendance-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1rem}
+.attendance-dialog h2{margin:0;font-size:1.25rem}
+.attendance-form,.employee-picker{display:grid;gap:1rem}
+.attendance-dialog label{display:grid;gap:.4rem;font-size:.9rem;min-width:0}
+.attendance-dialog input,.attendance-dialog select,.attendance-dialog textarea{width:100%;min-width:0;box-sizing:border-box}
+.attendance-dialog input[type=checkbox]{width:auto}
+.attendance-dialog label:has(input[type=checkbox]){display:flex;align-items:center}
+.attendance-dialog p,.attendance-dialog small{font-size:.85rem;line-height:1.5}
+.attendance-fields{display:grid;grid-template-columns:1fr 2fr;gap:.75rem}
+.employee-picker input[readonly]{background:var(--soft,#f4f7f5)}
+.attendance-table-scroll{width:100%;max-width:100%;max-height:min(680px,70dvh);overflow:auto;overscroll-behavior:contain;border:1px solid var(--border);border-radius:12px;scrollbar-gutter:stable}
+.attendance-table{width:100%;min-width:900px;border-collapse:separate;border-spacing:0;text-align:left;font-size:.875rem}
+.attendance-table th{position:sticky;top:0;z-index:1;background:var(--surface,#fff);white-space:nowrap;border-bottom:1px solid var(--border);padding:.8rem .65rem}
+.attendance-table td{padding:.65rem;vertical-align:top;border-bottom:1px solid var(--border);line-height:1.5}
+.attendance-table tbody tr:nth-child(even){background:var(--soft,#f3f7f3)}
+.attendance-table td:nth-child(3){min-width:150px;max-width:210px;overflow-wrap:anywhere}
+.attendance-table td:nth-child(4),.attendance-table td:nth-child(5){min-width:145px}
+.attendance-actions{min-width:185px;max-width:230px}
+.attendance-actions>.btn,.attendance-actions>button{padding:.35rem .5rem;font-size:.78rem;min-height:32px;margin:0 .25rem .25rem 0}
+.attendance-actions small{display:block;overflow-wrap:anywhere}
+.clock-position{font-size:.75rem;margin-top:.25rem}
+.clock-position summary{cursor:pointer;color:var(--muted)}
+.attendance-load-more{display:block;margin:.75rem auto}
+@media(max-width:600px){.attendance-dialog{padding:1rem;max-height:94dvh}.attendance-fields{grid-template-columns:1fr}.attendance-page .page-heading{flex-wrap:wrap;gap:.75rem}.attendance-page .page-heading h1{font-size:1.35rem;overflow-wrap:anywhere}.attendance-toolbar>.btn,.attendance-supplement>.btn{font-size:.85rem;padding:.65rem .8rem}.attendance-table-scroll{max-height:65dvh}.attendance-table{font-size:.8rem}.attendance-table td{padding:.5rem}}
