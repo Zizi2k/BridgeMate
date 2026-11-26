@@ -1,3 +1,4 @@
+import {shiftRateInput} from '../../../lib/attendance-rates';
 import {attendanceKind,regularAttendanceExists} from '../../../lib/attendance-kind';
 import {scheduleWeek,addScheduleDays,plannedShift,scheduleOverlaps,scheduleCapacityAllows,validScheduleCapacity} from '../../../lib/work-schedule';
 import {clockLocation,clockPhoto} from '../../../lib/clock-proof';
@@ -464,7 +465,7 @@ async function handle(req:Request){
     await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,employeeId)).for('update');
     const [existingRequest]=await tx.select().from(payrollEntries).where(eq(payrollEntries.id,id));if(existingRequest){check(existingRequest.scopeId==='team:daily-work'&&(existingRequest.data as any).requestHash===requestHash,'CONFLICT',409);return}
     if(detail.kind==='replace'){
-     const shifts=await tx.select().from(attendanceEntries).where(and(eq(attendanceEntries.userId,employeeId),eq(attendanceEntries.day,detail.day))).for('update');const completed=shifts.filter(shift=>shift.end);check(completed.length,'COMPLETED_SHIFT_REQUIRED');
+     const shifts=await tx.select().from(attendanceEntries).where(and(eq(attendanceEntries.userId,employeeId),eq(attendanceEntries.day,detail.day))).for('update');const completed=shifts.filter(shift=>shift.end&&!shift.payBasis);check(completed.length,'COMPLETED_SHIFT_REQUIRED');
      const rows=await tx.select().from(payrollEntries).where(eq(payrollEntries.scopeId,'team:daily-work'));
      const existing=rows.flatMap(row=>{const d=row.data as any;return d.recipientId===employeeId&&d.workDate===detail.day&&d.workDetails?.[0]?.kind==='replace'?[d.workDetails[0].minutes]:[]});
      check(replacementFits(detail.minutes,existing,completed.reduce((sum,shift)=>sum+monthMinutes(shift.day,shift.start,shift.end!,period,shift.breakMinutes),0)),'WORK_EXCEEDS_SHIFT');
@@ -855,6 +856,25 @@ async function handle(req:Request){
    }
    throw new ApiError('NOT_FOUND',404);
   }
+  if(path[1]&&path[2]==='rate'&&path.length===3&&method==='PATCH'){
+   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
+   let pricing:ReturnType<typeof shiftRateInput>;try{pricing=shiftRateInput(body)}catch(error){throw new ApiError(error instanceof Error?error.message:'INVALID_SHIFT_RATE')}
+   const affected=await db.transaction(async tx=>{
+    const [target]=await tx.select({userId:attendanceEntries.userId}).from(attendanceEntries).where(eq(attendanceEntries.id,path[1]));check(target,'NOT_FOUND',404);
+    const [assigned]=await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,target.userId)).for('update');check(assigned,'EMPLOYEE_NOT_ASSIGNED',404);
+    const [row]=await tx.select().from(attendanceEntries).where(eq(attendanceEntries.id,path[1])).for('update');check(row,'NOT_FOUND',404);check(await managesEmployee(row.userId),'FORBIDDEN',403);
+    const shifts=await tx.select().from(attendanceEntries).where(and(eq(attendanceEntries.userId,row.userId),eq(attendanceEntries.day,row.day))).for('update');
+    const jobs=await tx.select().from(payrollEntries).where(and(eq(payrollEntries.scopeId,'team:daily-work'),sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId')) = ${row.userId}`,sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.workDate')) = ${row.day}`)).for('update');
+    const required=jobs.reduce((sum,item)=>{const d=item.data as any;return sum+(d.workDetails?.[0]?.kind==='replace'?Number(d.workDetails[0].minutes):0)},0);
+    const available=shifts.filter(shift=>shift.end&&!(shift.id===row.id?pricing.payBasis:shift.payBasis)).reduce((sum,shift)=>sum+monthMinutes(shift.day,shift.start,shift.end!,row.day.slice(0,7),shift.breakMinutes),0);
+    check(required<=available,'SHIFT_RATE_CONFLICT',409);
+    const updatedAt=now();await tx.update(attendanceEntries).set({...pricing,updatedBy:user.id,updatedAt}).where(eq(attendanceEntries.id,row.id));
+    await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{action:'attendance-rate',before:{payBasis:row.payBasis,payRate:row.payRate,payNote:row.payNote},after:pricing},createdAt:updatedAt});
+    return {userId:row.userId,periods:[...new Set([row.day.slice(0,7),row.end?localDay(new Date(row.end)).slice(0,7):row.day.slice(0,7)])]};
+   });
+   for(const period of affected.periods)await attendancePayroll(period,true,false,ownerAdmin?undefined:currentDepartment.departmentId,affected.userId,true);
+   return ok({saved:true});
+  }
   if(path[1]&&method==='PATCH')return db.transaction(async tx=>{
    const [target]=await tx.select({userId:attendanceEntries.userId}).from(attendanceEntries).where(eq(attendanceEntries.id,path[1]));check(target,'NOT_FOUND',404);await tx.select().from(employeeAssignments).where(eq(employeeAssignments.userId,target.userId)).for('update');
    const [row]=await tx.select().from(attendanceEntries).where(eq(attendanceEntries.id,path[1])).for('update');
@@ -873,7 +893,7 @@ async function handle(req:Request){
     await tx.insert(attendanceAudit).values({id:uid(),entryId:row.id,actorId:user.id,data:{before:row,after:data},createdAt:now()});
     const custom=await tx.select().from(payrollEntries).where(and(eq(payrollEntries.scopeId,'team:daily-work'),sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.recipientId')) = ${row.userId}`,sql`JSON_UNQUOTE(JSON_EXTRACT(${payrollEntries.data}, '$.workDate')) = ${row.day}`)).for('update');
     const replacements=custom.flatMap(item=>{const d=item.data as any;return d.recipientId===row.userId&&d.workDate===row.day&&d.workDetails?.[0]?.kind==='replace'?[d.workDetails[0].minutes as number]:[]});
-    if(replacements.length)check(replacements.reduce((a,b)=>a+b,0)<=monthMinutes(row.day,start,end,row.day.slice(0,7),breakMinutes)+otherShifts.filter(shift=>shift.id!==row.id&&shift.day===row.day&&shift.end).reduce((sum,shift)=>sum+monthMinutes(shift.day,shift.start,shift.end!,row.day.slice(0,7),shift.breakMinutes),0),'WORK_EXCEEDS_SHIFT');
+    if(replacements.length)check(replacements.reduce((a,b)=>a+b,0)<=(row.payBasis?0:monthMinutes(row.day,start,end,row.day.slice(0,7),breakMinutes))+otherShifts.filter(shift=>shift.id!==row.id&&shift.day===row.day&&shift.end&&!shift.payBasis).reduce((sum,shift)=>sum+monthMinutes(shift.day,shift.start,shift.end!,row.day.slice(0,7),shift.breakMinutes),0),'WORK_EXCEEDS_SHIFT');
     await tx.update(attendanceEntries).set(data).where(eq(attendanceEntries.id,row.id));
    }
    return ok(null);

@@ -20,14 +20,15 @@ export function buildAttendanceReport(period:string,people:ReportPerson[],entrie
    if(!matched.length){days.push({day,weekday,start:'',end:'',breakMinutes:0,minutes:0,status:day>today?'Chưa đến ngày':'Chưa có chấm công',notes:jobNotes});continue}
    for(const [entryIndex,entry] of matched.entries()){
     const history=audits.filter(audit=>audit.entryId===entry.id).flatMap(audit=>{
-     const data=audit.data||{};const reason=data.after?.reason||data.reason||(data.action==='attendance-supplement'?data.reason:'');
-     const label=data.action==='evidence-change-request'?'Yêu cầu đổi ảnh':data.action==='attendance-supplement'?'Bổ sung chấm công':'Chỉnh sửa';
+     const data=audit.data||{};const reason=data.after?.reason||data.after?.payNote||data.reason||(data.action==='attendance-supplement'?data.reason:'');
+     const label=data.action==='attendance-rate'?'Đơn giá buổi':data.action==='evidence-change-request'?'Yêu cầu đổi ảnh':data.action==='attendance-supplement'?'Bổ sung chấm công':'Chỉnh sửa';
      return reason?[`${time(audit.createdAt)} · ${audit.actorName||'Người có quyền'} · ${label}: ${reason}`]:[];
     });
     const positions=['in','out'].flatMap(action=>{const point=entry.locations?.[action];return point?[`Vị trí ${action==='in'?'vào':'ra'}: ${Number(point.latitude).toFixed(6)}, ${Number(point.longitude).toFixed(6)} (sai số ±${Math.round(point.accuracy)} m)`]:[]});
     const bounds=entry.end?attendanceBounds(entry.start,entry.end):null;
     const rounding=bounds&&(bounds.start!==Date.parse(entry.start)||bounds.end!==Date.parse(entry.end))?'Giờ tính công sau làm tròn 10 phút: '+time(new Date(bounds.start).toISOString())+' → '+time(new Date(bounds.end).toISOString()):'';
-    const notes=[rounding,entry.kind==='other'?'Chấm công khác / ngoài giờ: '+(entry.workLabel||'Công việc khác'):'',entry.supplemented?'Chấm công bổ sung':'',entry.day<day?'Ca chuyển từ ngày '+entry.day:'',entry.reason?'Lý do hiện tại: '+entry.reason:'',...history,...positions,entryIndex===0?jobNotes:''].filter(Boolean).join('\n');
+    const pricing=entry.payBasis?'Đơn giá buổi: '+Number(entry.payRate).toLocaleString('vi-VN')+(entry.payBasis==='hour'?' đ/giờ':' đ/buổi')+'; '+(entry.payNote||''):'';
+    const notes=[pricing,rounding,entry.kind==='other'?'Chấm công khác / ngoài giờ: '+(entry.workLabel||'Công việc khác'):'',entry.supplemented?'Chấm công bổ sung':'',entry.day<day?'Ca chuyển từ ngày '+entry.day:'',entry.reason?'Lý do hiện tại: '+entry.reason:'',...history,...positions,entryIndex===0?jobNotes:''].filter(Boolean).join('\n');
     let minutes=0;if(entry.end)minutes=monthMinutes(entry.day,entry.start,entry.end,period,entry.breakMinutes||0);
     days.push({day,weekday,start:time(entry.start),end:entry.end?time(entry.end):'',breakMinutes:entry.breakMinutes||0,minutes,status:entry.end?'Đủ giờ vào/ra':'Chưa chấm ra',notes});
    }

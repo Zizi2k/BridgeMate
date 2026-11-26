@@ -61,7 +61,7 @@ export const employeeAssignments=mysqlTable('employee_assignments',{
 export const attendanceEntries=mysqlTable('attendance_entries',{
  id:id().primaryKey(),userId:id('user_id').notNull().references(()=>users.id),
  day:varchar('day',{length:10}).notNull(),regularDay:varchar('regular_day',{length:10}),kind:varchar('kind',{length:12}).notNull().default('regular'),workLabel:varchar('work_label',{length:180}).notNull().default(''),start:iso('start').notNull(),end:iso('end'),locations:json('locations'),
- breakMinutes:int('break_minutes').notNull().default(0),
+ breakMinutes:int('break_minutes').notNull().default(0),payBasis:varchar('pay_basis',{length:12}),payRate:int('pay_rate'),payNote:text('pay_note'),
  supplemented:int('supplemented').notNull().default(0),
  editable:int('editable').notNull().default(0),reason:text('reason').notNull(),
  updatedBy:id('updated_by').notNull(),updatedAt:iso('updated_at').notNull(),

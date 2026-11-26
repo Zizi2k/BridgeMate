@@ -1,3 +1,4 @@
+import {attendanceShiftPay} from './attendance-rates';
 import {priceReplacements,type WorkDetail} from './daily-work';
 import {createHash} from 'node:crypto';
 import {and,eq,lt} from 'drizzle-orm';
@@ -28,14 +29,15 @@ export async function attendancePayroll(period:string,commit=false,onlyMissing=f
   const works=workRows.filter(row=>{const d=row.data as any;return d.recipientId===employee.userId&&d.period===period&&d.departmentId===payrollDepartment});
   if(onlyMissing&&existing&&previous.syncedAt&&relevant.every(row=>row.updatedAt<=previous.syncedAt)&&works.every(row=>(row.data as any).updatedAt<=previous.syncedAt))return;
   const rate=(onlyMissing||keepRate)&&existing?previous.rate:freshEmployee.rate;
-  const total=Math.round(minutes/60*rate)+(previous.commission||0);
+  const priced=attendanceShiftPay(shifts,period,rate);
+  const total=priced.total+(previous.commission||0);
   const data={work:'Chấm công tháng '+period,worker:employee.name,period,recipientId:employee.userId,employeeCode:employee.code,
    departmentId:payrollDepartment,mode:'hour',rate,hours:minutes/60,workDate:'',start:'',end:'',plan:'',advance:previous.advance||0,revenue:previous.revenue||0,
-   commission:previous.commission||0,total,balance:total-(previous.advance||0),profit:(previous.revenue||0)-total,source:'attendance',syncedAt:new Date().toISOString()};
+   commission:previous.commission||0,workDetails:priced.details,total,balance:total-(previous.advance||0),profit:(previous.revenue||0)-total,source:'attendance',syncedAt:new Date().toISOString()};
   if(commit)await tx.insert(payrollEntries).values({id,scopeId:'team:attendance',data}).onDuplicateKeyUpdate({set:{data}});
   const details=priceReplacements(works.map(row=>(row.data as any).workDetails[0] as WorkDetail).sort((a,b)=>a.id.localeCompare(b.id)),rate);
   if(commit)for(const work of works){const old=work.data as any,detail=details.find(item=>item.id===work.id)!;await tx.update(payrollEntries).set({data:{...old,total:detail.amount,balance:detail.amount,profit:-detail.amount,workDetails:[detail]}}).where(eq(payrollEntries.id,work.id))}
-  result.push({...data,id,total:data.total+details.reduce((sum,item)=>sum+item.amount,0),balance:data.total+details.reduce((sum,item)=>sum+item.amount,0)-data.advance,hours:data.hours+details.filter(item=>item.kind==='extra').reduce((sum,item)=>sum+item.minutes/60,0),workDetails:details});
+  result.push({...data,id,total:data.total+details.reduce((sum,item)=>sum+item.amount,0),balance:data.total+details.reduce((sum,item)=>sum+item.amount,0)-data.advance,hours:data.hours+details.filter(item=>item.kind==='extra').reduce((sum,item)=>sum+item.minutes/60,0),workDetails:[...priced.details,...details]});
   });
  }
  return result;
