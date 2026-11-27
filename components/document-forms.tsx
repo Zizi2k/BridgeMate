@@ -1,4 +1,5 @@
 'use client';
+import AttendanceDialog from './attendance-dialog';
 import {actionFetch,showActionFeedback} from '../lib/action-feedback';
 
 import {useEffect,useRef,useState,type FormEvent,type KeyboardEvent} from 'react';
@@ -15,6 +16,7 @@ const mime:Record<string,string>={
 
 export default function DocumentForms({lang}:{lang:string}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
+ const [fillOpen,setFillOpen]=useState(false);
  const [yellowOnly,setYellowOnly]=useState(true),[useAI,setUseAI]=useState(false);
  const template=useRef<Template|null>(null);
  const [preview,setPreview]=useState<PreviewPart[]>([]);
@@ -37,7 +39,7 @@ export default function DocumentForms({lang}:{lang:string}){
   return()=>{active=false;if(url)URL.revokeObjectURL(url)};
  },[file]);
  function changeFile(next:File|null){
-  template.current=null;setPreview([]);setPdfUrl('');setPart(0);setFile(next);setFields([]);setValues({});setStatus('');setError('');
+  setFillOpen(false);template.current=null;setPreview([]);setPdfUrl('');setPart(0);setFile(next);setFields([]);setValues({});setStatus('');setError('');
  }
  async function analyze(){
   if(!file)return;
@@ -50,7 +52,7 @@ export default function DocumentForms({lang}:{lang:string}){
    setPart(0);
    if(!parsed.targets.length){setStatus('EMPTY');return}
    const initial=parsed.targets.map(target=>({...target,label:target.hint||target.context||target.id,included:true}));
-   setFields(initial);
+   setFields(initial);setFillOpen(true);
    if(!useAI){setStatus('READY');return}
    setPhase('ai');
    // Only short surrounding excerpts are needed for AI naming.
@@ -196,7 +198,8 @@ export default function DocumentForms({lang}:{lang:string}){
   </div>
   {status&&<p role="status">{messages[status]}</p>}
   {error&&<p role="alert">{error==='EXPORT'?t('Export failed. Check field lengths and try again.','Xuất tệp thất bại. Kiểm tra độ dài dữ liệu rồi thử lại.'):t('Unable to read the template. Check its format and file size.','Không đọc được mẫu. Kiểm tra định dạng và dung lượng tệp.')}</p>}
-  {fields.length>0&&<form className={styles.fields} onSubmit={download}>
+  {fields.length>0&&<button type="button" className="btn primary" disabled={busy} onClick={()=>setFillOpen(true)}>{t('Fill template','Điền thông tin')} · {fields.filter(field=>field.included).length} {t('fields','trường')}</button>}
+  {fillOpen&&fields.length>0&&<AttendanceDialog title={t('Fill template','Điền thông tin mẫu')} busy={busy} onClose={()=>setFillOpen(false)}><p>{file?.name}</p>{error&&<p role="alert">{t('Unable to export. Check your input and try again.','Không xuất được tệp. Kiểm tra dữ liệu rồi thử lại.')}</p>}<form className={styles.fields} onSubmit={download}>
    {fields.map((field,index)=><fieldset key={field.id} className={styles.panel} disabled={busy}>
     <legend>{field.label||t('Field','Trường')} · {index+1}</legend>
     <label className={styles.inline}><input type="checkbox" checked={field.included} onChange={event=>{const included=event.target.checked;setFields(current=>current.map(row=>row.id===field.id?{...row,included}:row))}}/>{t('Include in export','Điền khi xuất tệp')}</label>
@@ -207,7 +210,7 @@ export default function DocumentForms({lang}:{lang:string}){
      <label>{t('Value','Dữ liệu điền')}<input disabled={!field.included} ref={node=>{if(node)valueInputs.current.set(field.id,node);else valueInputs.current.delete(field.id)}} onKeyDown={event=>nextField(event,field.id)} value={values[field.id]||''} maxLength={1000} onChange={event=>{const value=event.target.value;setValues(current=>({...current,[field.id]:value}))}}/></label>}
    </fieldset>)}
    <button className="btn primary" disabled={busy||!fields.some(field=>field.included&&values[field.id])}><Download size={17}/>{t('Download filled file','Tải tệp đã điền')}</button>
-  </form>}
+  <button type="button" className="btn" disabled={busy} onClick={()=>setFillOpen(false)}>{t('Close and keep draft','Đóng và giữ nội dung')}</button></form></AttendanceDialog>}
   </div>
   <aside className={styles.preview} aria-label={t('Template preview','Xem trước mẫu')}>
    <div className={styles.previewHeader}>
