@@ -15,6 +15,7 @@ const mime:Record<string,string>={
 
 export default function DocumentForms({lang}:{lang:string}){
  const t=(en:string,vi:string)=>lang==='vi'?vi:en;
+ const [yellowOnly,setYellowOnly]=useState(true),[useAI,setUseAI]=useState(false);
  const template=useRef<Template|null>(null);
  const [preview,setPreview]=useState<PreviewPart[]>([]);
  const [pdfUrl,setPdfUrl]=useState('');
@@ -43,13 +44,14 @@ export default function DocumentForms({lang}:{lang:string}){
   setBusy(true);setPhase('reading');setPercent(0);setError('');setStatus('');setFields([]);setValues({});
   try{
    const {readTemplate}=await import('../lib/document-template');
-   const parsed=await readTemplate(file,{onRead:setPercent,onParse:()=>setPhase('parsing')});
+   const parsed=await readTemplate(file,{onRead:setPercent,onParse:()=>setPhase('parsing')},{yellowOnly});
    template.current=parsed;
    setPreview(parsed.preview?.()||[]);
    setPart(0);
    if(!parsed.targets.length){setStatus('EMPTY');return}
    const initial=parsed.targets.map(target=>({...target,label:target.hint||target.context||target.id,included:true}));
    setFields(initial);
+   if(!useAI){setStatus('READY');return}
    setPhase('ai');
    // Only short surrounding excerpts are needed for AI naming.
    const context=JSON.stringify(parsed.targets.slice(0,28).map(({id,context})=>({id,context:context.slice(0,125)})));
@@ -149,7 +151,7 @@ export default function DocumentForms({lang}:{lang:string}){
   setBusy(true);setPhase('export');setError('');
   try{
    const {readTemplate}=await import('../lib/document-template');
-   const original=await readTemplate(file);
+   const original=await readTemplate(file,undefined,{yellowOnly});
    for(const field of fields){
     if(field.manual&&field.location&&!original.addField?.(field.location,field.label))throw Error('EXPORT');
    }
@@ -167,18 +169,21 @@ export default function DocumentForms({lang}:{lang:string}){
   phase==='ai'?t('AI is naming fields','AI đang đặt tên trường'):
   t('Preparing download','Đang chuẩn bị tệp tải xuống');
  const messages:Record<string,string>={
-  EMPTY:t('No fillable fields found. For Word or Excel, mark blanks with {{Field name}}. For PDF, use an interactive form.','Chưa tìm thấy trường điền. Với Word hoặc Excel, đánh dấu vị trí bằng {{Tên trường}}. Với PDF, hãy dùng mẫu có ô nhập tương tác.'),
+  EMPTY:t('No fillable fields found. For Word or Excel, mark blanks with {{Field name}}. For PDF, use an interactive form.','Chưa tìm thấy vị trí cần điền. Bôi vàng trực tiếp dấu .... trong Word hoặc tô nền vàng ô chứa .... trong Excel, rồi import lại. Có thể tắt chế độ chỉ bôi vàng để nhận diện cả {{Tên trường}} và các dấu trống khác.'),
   READY:t('Review the suggested labels and enter your values.','Kiểm tra tên trường gợi ý rồi nhập dữ liệu.'),
   PARTIAL:t('AI named the first 28 fields. You can rename any remaining field.','AI đặt tên cho 28 trường đầu. Bạn có thể đổi tên các trường còn lại.'),
   FALLBACK:t('AI is unavailable. You can still review and fill the detected fields.','AI chưa phản hồi. Bạn vẫn có thể chỉnh và điền các trường đã tìm thấy.'),
  };
  return <section>
-  <div className="page-heading"><div><h1>{t('Document forms','Điền biểu mẫu AI')}</h1><p>{t('Upload a template, review its fields, then export a filled copy.','Tải mẫu lên, kiểm tra các trường cần điền và xuất bản đã điền.')}</p></div></div>
+  <div className="page-heading"><div><h1>{t('Quick documents from templates','Tạo file nhanh từ mẫu')}</h1><p>{t('Upload a template, review its fields, then export a filled copy.','Tải mẫu lên, kiểm tra các trường cần điền và xuất bản đã điền.')}</p></div></div>
   <div className={styles.layout}><div className={styles.formColumn}>
   <div className={styles.panel}>
    <label className={styles.upload}><FileText size={21}/><span>{t('Template file','Tệp mẫu')} · DOCX / XLSX / PDF · 8 MB</span>
     <input type="file" accept=".docx,.xlsx,.pdf" disabled={busy} onChange={event=>changeFile(event.target.files?.[0]||null)}/>
    </label>
+   <label className={styles.inline}><input type="checkbox" checked={yellowOnly} disabled={busy} onChange={event=>{setYellowOnly(event.target.checked);changeFile(file)}}/>Chỉ nhận diện dấu .... bôi vàng (DOCX) hoặc ô tô vàng (XLSX)</label>
+   <label className={styles.inline}><input type="checkbox" checked={useAI} disabled={busy} onChange={event=>setUseAI(event.target.checked)}/>Dùng AI gợi ý tên trường (không bắt buộc)</label>
+   <small>Nhập từng mẫu hợp đồng, báo giá hoặc bảng tính. Chỉnh tên trường, điền dữ liệu và tải bản sao. Mẫu gốc không bị thay đổi.</small>
    {phase&&<div className={styles.progressBlock}>
     <div className={styles.progressHeading}>
      <span role="status">{phaseLabel}</span>
@@ -186,7 +191,7 @@ export default function DocumentForms({lang}:{lang:string}){
     </div>
     <progress className={styles.progress} aria-label={phaseLabel} max={100} value={phase==='reading'?percent:undefined}/>
    </div>}
-   <p>{t('Detection sends short excerpts around candidate fields to the configured AI provider. Your file and entered values are processed in your browser.','Khi nhận diện, hệ thống gửi đoạn văn bản ngắn quanh vị trí cần điền đến AI. Tệp và dữ liệu bạn nhập được xử lý trong trình duyệt.')}</p>
+   <p>{t('Detection sends short excerpts around candidate fields to the configured AI provider. Your file and entered values are processed in your browser.','Tệp và dữ liệu điền được xử lý trên trình duyệt. Chỉ khi bật AI, đoạn văn bản ngắn quanh trường mới được gửi để gợi ý tên. Bản xem trước là sơ đồ nội dung; định dạng xuất lấy từ mẫu gốc. Nội dung dài có thể làm thay đổi số trang.')}</p>
    <button className="btn primary" disabled={!file||busy} onClick={()=>void analyze()}><Sparkles size={16}/>{t('Detect fields','Nhận diện trường')}</button>
   </div>
   {status&&<p role="status">{messages[status]}</p>}

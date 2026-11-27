@@ -2,7 +2,7 @@ export const modules=['document-forms','phrases','ai','quiz','links','payroll-pe
 export type Module=typeof modules[number];
 export type Permission='pending'|'approved'|'denied';
 export const moduleLabels:Record<Module,[string,string]>={
- 'document-forms':['Document forms','Điền biểu mẫu AI'],
+ 'document-forms':['Quick documents','Tạo file từ mẫu'],
  phrases:['Phrasebook','Cẩm nang'],
  ai:['AI assistant','Trợ lý AI'],
  quiz:['Practice','Luyện tập'],

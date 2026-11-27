@@ -18,7 +18,7 @@ function xml(source:string){
 }
 const entries = (text:string)=>Array.from(text.matchAll(token));
 
-export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>void;onParse:()=>void}):Promise<Template>{
+export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>void;onParse:()=>void},options?:{yellowOnly?:boolean}):Promise<Template>{
  const format=file.name.split('.').pop()?.toLowerCase()||'';
  if(!['docx','xlsx','pdf'].includes(format)||file.size>8*1024*1024)throw Error('INVALID_FILE');
  const bytes=hooks?await new Promise<ArrayBuffer>((resolve,reject)=>{
@@ -75,7 +75,9 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
     const nodes=elements(paragraph,word,'t');
     const texts=nodes.map(n=>n.textContent||'');
     const text=texts.join('');
-    const matches=entries(text).map(match=>({match,id:add(text.slice(Math.max(0,match.index!-70),match.index!+100),match[1]||match[2],location)})).filter(x=>x.id);
+    const marked=nodes.map(node=>{const run=node.parentElement;return !!run&&(elements(run,word,'highlight').some(item=>item.getAttributeNS(word,'val')==='yellow')||elements(run,word,'shd').some(item=>/^(?:FFFF00|FFF200)$/i.test(item.getAttributeNS(word,'fill')||'')))});
+    const isMarked=(start:number,end:number)=>{let at=0;return texts.every((value,index)=>{const next=at+value.length,overlap=next>start&&at<end;at=next;return !overlap||marked[index]})};
+    const matches=entries(text).filter(match=>!options?.yellowOnly||isMarked(match.index!,match.index!+match[0].length)).map(match=>({match,id:add(text.slice(Math.max(0,match.index!-70),match.index!+100),match[1]||match[2],location)})).filter(x=>x.id);
     for(const {match,id} of matches)targets[Number(id)-1].span={start:match.index!,end:match.index!+match[0].length};
     if(!matches.length){
      manual.set(key(location),label=>{
@@ -120,6 +122,11 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
   }
  }else{
   if(!zip.file('xl/workbook.xml'))throw Error('INVALID_FILE');
+  const styles=zip.file('xl/styles.xml');const styleDoc=styles?xml(await styles.async('string')):null;
+  const fills=styleDoc?elements(styleDoc,sheet,'fills')[0]:undefined;
+  const yellowFills=fills?elements(fills,sheet,'fill').map(fill=>elements(fill,sheet,'patternFill').some(pattern=>pattern.getAttribute('patternType')==='solid'&&elements(pattern,sheet,'fgColor').some(color=>/^(?:FF)?(?:FFFF00|FFF200)$/i.test(color.getAttribute('rgb')||'')||color.getAttribute('indexed')==='6'))):[];
+  const cellStyles=styleDoc?elements(styleDoc,sheet,'cellXfs')[0]:undefined;
+  const yellowStyles=cellStyles?elements(cellStyles,sheet,'xf').map(style=>yellowFills[Number(style.getAttribute('fillId')||0)]===true):[];
   const shared=zip.file('xl/sharedStrings.xml');
   const strings=shared?elements(xml(await shared.async('string')),sheet,'si').map(n=>elements(n,sheet,'t').map(t=>t.textContent||'').join('')):[];
   for(const name of names.filter(n=>/^xl\/worksheets\/sheet\d+\.xml$/.test(n))){
@@ -150,8 +157,8 @@ export async function readTemplate(file:File, hooks?:{onRead:(percent:number)=>v
     const text=read(cell), ref=cell.getAttribute('r')||'';
     const previous=cell.previousElementSibling;
     const label=previous?.localName==='c'?read(previous):'';
-    const candidates:Array<{0:string;1?:string;2?:string;index?:number}>=entries(text);
-    if(!text && cell.hasAttribute('s') && label && /[:：]$/.test(label.trim()))candidates.push({0:'',index:0});
+    const candidates:Array<{0:string;1?:string;2?:string;index?:number}>=entries(text).filter(()=>!options?.yellowOnly||yellowStyles[Number(cell.getAttribute('s')||0)]===true);
+    if(!options?.yellowOnly&&!text && cell.hasAttribute('s') && label && /[:：]$/.test(label.trim()))candidates.push({0:'',index:0});
     const matched=candidates.map(match=>({match,id:add(ref+' · '+label+' '+text,match[1]||match[2]||undefined,location)})).filter(x=>x.id);
     for(const {match,id} of matched)targets[Number(id)-1].span={start:match.index!,end:match.index!+match[0].length};
     const write=(values:Record<string,string>)=>{
