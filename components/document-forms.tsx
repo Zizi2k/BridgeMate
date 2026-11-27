@@ -1,4 +1,5 @@
 'use client';
+import TemplateLibrary from './template-library';
 import AttendanceDialog from './attendance-dialog';
 import {actionFetch,showActionFeedback} from '../lib/action-feedback';
 
@@ -41,19 +42,19 @@ export default function DocumentForms({lang}:{lang:string}){
  function changeFile(next:File|null){
   setFillOpen(false);template.current=null;setPreview([]);setPdfUrl('');setPart(0);setFile(next);setFields([]);setValues({});setStatus('');setError('');
  }
- async function analyze(){
-  if(!file)return;
+ async function analyze(source=file,saved?:any){
+  if(!source)return;
   setBusy(true);setPhase('reading');setPercent(0);setError('');setStatus('');setFields([]);setValues({});
   try{
    const {readTemplate}=await import('../lib/document-template');
-   const parsed=await readTemplate(file,{onRead:setPercent,onParse:()=>setPhase('parsing')},{yellowOnly});
+   const parsed=await readTemplate(source,{onRead:setPercent,onParse:()=>setPhase('parsing')},{yellowOnly:saved?.yellowOnly??yellowOnly});
    template.current=parsed;
    setPreview(parsed.preview?.()||[]);
    setPart(0);
    if(!parsed.targets.length){setStatus('EMPTY');return}
-   const initial=parsed.targets.map(target=>({...target,label:target.hint||target.context||target.id,included:true}));
+   const initial=parsed.targets.map(target=>{const old=saved?.fields?.find((field:any)=>field.id===target.id);return {...target,label:old?.label||target.hint||target.context||target.id,included:old?.included??true}});
    setFields(initial);setFillOpen(true);
-   if(!useAI){setStatus('READY');return}
+   if(saved||!useAI){setStatus('READY');return}
    setPhase('ai');
    // Only short surrounding excerpts are needed for AI naming.
    const context=JSON.stringify(parsed.targets.slice(0,28).map(({id,context})=>({id,context:context.slice(0,125)})));
@@ -178,6 +179,7 @@ export default function DocumentForms({lang}:{lang:string}){
  };
  return <section>
   <div className="page-heading"><div><h1>{t('Quick documents from templates','Tạo file nhanh từ mẫu')}</h1><p>{t('Upload a template, review its fields, then export a filled copy.','Tải mẫu lên, kiểm tra các trường cần điền và xuất bản đã điền.')}</p></div></div>
+  <TemplateLibrary file={file} fields={fields} yellowOnly={yellowOnly} disabled={busy} onOpen={async(next,config)=>{changeFile(next);setYellowOnly(config.yellowOnly);await analyze(next,config)}}/>
   <div className={styles.layout}><div className={styles.formColumn}>
   <div className={styles.panel}>
    <label className={styles.upload}><FileText size={21}/><span>{t('Template file','Tệp mẫu')} · DOCX / XLSX / PDF · 8 MB</span>
