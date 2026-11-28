@@ -1,5 +1,6 @@
 'use client';
 import {actionFetch} from '../lib/action-feedback';
+import PayrollBrandingEditor from './payroll-branding';
 import DailyWork from './daily-work';
 import {useEffect,useState,useRef} from 'react';
 import PrintPayroll from './print-payroll';
@@ -51,8 +52,8 @@ export default function DepartmentPayroll({ownerAdmin}:{ownerAdmin:boolean}){
  }
  const groups=groupPayrollReport(result?.rows||[]);
  const autoSlip=(row:PayrollReportRow)=>row.period===result?.asOf?(result.consolidated?.find((statement:PayrollReportRow)=>payrollIdentityKey(statement)===payrollIdentityKey(row))||row):row;
- if(slip&&result)return <PrintPayroll entry={slip} advance={false} readOnlyTemplate={result.template} onClose={()=>setSlip(null)}/>;
- return <section><h1>Bảng lương nhân viên {ownerAdmin?'theo phòng ban':'phòng ban'}</h1>{range==='month'&&<DailyWork period={period} onChanged={()=>setRevision(value=>value+1)}/>}<div className="board-toolbar" style={{flexWrap:'wrap'}}>
+ if(slip&&result)return <PrintPayroll entry={slip} advance={false} readOnlyTemplate={{...result.template,...result.template.byDepartment?.[slip.departmentId]}} onClose={()=>setSlip(null)}/>;
+ return <section><h1>Bảng lương nhân viên {ownerAdmin?'theo phòng ban':'phòng ban'}</h1>{(departmentId||result?.brandingDepartmentId)?<PayrollBrandingEditor key={departmentId||result?.brandingDepartmentId} departmentId={departmentId||result?.brandingDepartmentId} onSaved={()=>setRevision(value=>value+1)}/>:<p>Chọn một phòng ban để cấu hình logo và người lập phiếu.</p>}{range==='month'&&<DailyWork period={period} onChanged={()=>setRevision(value=>value+1)}/>}<div className="board-toolbar" style={{flexWrap:'wrap'}}>
  <label>Thời gian <select value={range} onChange={e=>setRange(e.target.value)}><option value="month">Theo tháng</option><option value="year">Cả năm</option></select></label>
  {range==='month'?<label>Tháng <input type="month" required value={period} onChange={e=>{if(e.target.value)setPeriod(e.target.value)}}/></label>:<label>Năm <input type="number" min={1900} max={2100} value={year} onChange={e=>setYear(e.target.value)}/></label>}
  {ownerAdmin&&<label>Phòng ban <select value={departmentId} onChange={e=>setDepartmentId(e.target.value)}><option value="">Tất cả phòng ban</option>{departments.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label>}

@@ -5,8 +5,8 @@ import {payrollQr} from '../lib/payroll-qr';
 import {useEffect,useState,type FormEvent} from 'react';
 import {printDefaults,type PrintTemplate} from '../lib/module-access';
 
-type Slip={workDetails?:import('../lib/daily-work').WorkDetail[];paid?:number;isConsolidated?:boolean;fromPeriod?:string;periods?:{period:string;total:number;advance:number;paid:number;balance:number}[];id:string;worker:string;work:string;employeeCode?:string;period:string;total:number;commission:number;advance:number;balance:number};
-const keys=Object.keys(printDefaults) as Array<keyof PrintTemplate>;
+type Slip={departmentId?:string;workDetails?:import('../lib/daily-work').WorkDetail[];paid?:number;isConsolidated?:boolean;fromPeriod?:string;periods?:{period:string;total:number;advance:number;paid:number;balance:number}[];id:string;worker:string;work:string;employeeCode?:string;period:string;total:number;commission:number;advance:number;balance:number};
+const keys=Object.keys(printDefaults) as Array<keyof typeof printDefaults>;
 const headings:Partial<Record<keyof PrintTemplate,string>>={company:'Công ty',address:'Địa chỉ',salaryTitle:'Tiêu đề phiếu lương',advanceTitle:'Tiêu đề phiếu tạm ứng'};
 
 async function settings(data?:PrintTemplate):Promise<PrintTemplate>{
@@ -33,7 +33,7 @@ export function PrintTemplateEditor(){
 }
 
 export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{entry:Slip;advance:boolean;onClose:()=>void;readOnlyTemplate?:PrintTemplate}){
- const [template,setTemplate]=useState<PrintTemplate|null>(readOnlyTemplate??null),[error,setError]=useState(false);
+ const [template,setTemplate]=useState<PrintTemplate|null>(readOnlyTemplate?{...readOnlyTemplate,...readOnlyTemplate.byDepartment?.[entry.departmentId||'']}:null),[error,setError]=useState(false);
  const [code,setCode]=useState(entry.employeeCode??''),[position,setPosition]=useState('');
  const [date,setDate]=useState(()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Ho_Chi_Minh'}).format(new Date()));
  useEffect(()=>{if(readOnlyTemplate)return;let active=true;settings().then(data=>{if(active)setTemplate(data)}).catch(()=>{if(active)setError(true)});return()=>{active=false}},[readOnlyTemplate]);
@@ -133,7 +133,7 @@ export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{e
    {error&&<p role="alert">Không tải được mẫu in.</p>}
   </div>
   {template&&<article className="pay-slip-page">
-   <header><strong>{template.company}</strong><p>{template.address}</p></header>
+   <header>{template.logo&&<img src={template.logo} alt="Logo Ban" style={{maxWidth:100,maxHeight:70,objectFit:'contain'}}/>}<strong>{template.departmentTitle||template.company}</strong><p>{template.address}</p></header>
    <h2>{entry.isConsolidated?'PHIẾU LƯƠNG CỘNG GỘP':advance?template.advanceTitle:template.salaryTitle}</h2>
    <p className="pay-slip-center">Ngày lập {date.split('-').reverse().join('/')} · Kỳ lương {entry.period.split('-').reverse().join('/')}</p>
    <table><thead><tr><th>STT</th><th>Thông tin</th><th>Giá trị</th></tr></thead><tbody>
@@ -165,7 +165,7 @@ export default function PrintPayroll({entry,advance,onClose,readOnlyTemplate}:{e
     </div>
     {qr&&<img src={qr} alt="Mã VietQR chuyển khoản" width={144} height={144}/>}
    </section>}
-   <footer><strong>{template.payer}</strong><strong>{template.receiver}</strong></footer>
+   <footer><strong>{template.payer}{template.preparedBy&&<span style={{display:'block',marginTop:35}}>{template.preparedBy}</span>}</strong><strong>{template.receiver}</strong></footer>
   </article>}
  </div>;
 }

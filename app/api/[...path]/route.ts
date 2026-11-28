@@ -1,4 +1,4 @@
-import {savedTemplate,TEMPLATE_LIMIT} from '../../../lib/saved-template';
+import {payrollBranding} from '../../../lib/payroll-branding';
 import {isLayout} from '../../../lib/appearance';
 import {VERIFICATION_TTL,verificationToken,tokenDigest,validVerificationToken,verificationThrottle,verificationMailConfigured,sendVerificationEmail} from '../../../lib/email-verification';
 import {shiftRateInput} from '../../../lib/attendance-rates';
@@ -66,7 +66,7 @@ async function handle(req:Request){
  if(method!=='GET'){const origin=req.headers.get('origin');check(!origin||origin===url.origin||origin===process.env.APP_ORIGIN,'ORIGIN',403);check((req.headers.get('content-type')||'').includes('application/json'),'CONTENT_TYPE',415)}
  const body:any=method==='GET'?{}:await req.json().catch(()=>{throw new ApiError('VALIDATION')});
  check(body&&typeof body==='object'&&!Array.isArray(body));
- check(JSON.stringify(body).length<(path[0]==='document-templates'?4300000:path[0]==='attendance-import'?4300000:path[0]==='attendance'&&(path[2]==='photos'||path[1]==='clock'||path[1]==='supplement')?4300000:path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
+ check(JSON.stringify(body).length<(path[0]==='attendance-import'?4300000:path[0]==='attendance'&&(path[2]==='photos'||path[1]==='clock'||path[1]==='supplement')?4300000:path[0]==='personal'&&path[1]==='links'?830000:path[0]==='profiles'&&method==='PATCH'?180000:(path[0]==='quiz'&&path[1]==='import'||path[0]==='aptis'&&['bank','photo'].includes(path[1]))?2900000:path[0]==='quiz'&&path[1]==='questions'?1800000:30000),'TOO_LARGE',413);
  async function userSummary(u:any){const [p]=await db.select({avatar:profiles.avatar,slogan:profiles.slogan}).from(profiles).where(eq(profiles.userId,u.id)).limit(1);const [employee]=await db.select().from(employeeAssignments).where(eq(employeeAssignments.userId,u.id));const [department]=await db.select({id:departments.id,name:departments.name,status:accountDepartments.status}).from(accountDepartments).innerJoin(departments,and(eq(accountDepartments.departmentId,departments.id),eq(departments.active,1))).where(eq(accountDepartments.userId,u.id));return {...publicUser(u),departmentId:department?.id||'',departmentName:department?.name||'',departmentStatus:department?.status||'',accountRole:accountRole(u)==='admin'?'admin':employee?.manager?'manager':accountRole(u),avatar:p?.avatar||'',slogan:p?.slogan||''};}
  async function session(u:any,executor:any=db){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await executor.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
@@ -344,30 +344,6 @@ async function handle(req:Request){
   const status=(await permissionRows()).find(row=>row.module===module)?.status;
   return canAccessModule(module,{ownerAdmin,manager:admin,demo:!!user.demo,hidden:await hidden(module),status:status as 'pending'|'approved'|'denied'|undefined});
  };
- if(path[0]==='document-templates'){
-  check(await approved('document-forms'),'FORBIDDEN',403);check(!user.demo,'FORBIDDEN',403);
-  const scope=and(eq(personalEntries.userId,user.id),eq(personalEntries.kind,'template'));
-  const meta=(row:any)=>{const {file,fields,...rest}=row.data;return {...rest,id:row.id}};
-  if(method==='GET'&&path.length===1){const rows=await db.select({id:personalEntries.id,data:sql<any>`JSON_REMOVE(${personalEntries.data}, '$.file', '$.fields')`}).from(personalEntries).where(scope);return ok(rows.map(meta))}
-  if(method==='GET'&&path.length===2){const [row]=await db.select().from(personalEntries).where(and(scope,eq(personalEntries.id,path[1])));check(row,'NOT_FOUND',404);return ok({...row.data as any,id:row.id})}
-  check(['POST','PATCH','DELETE'].includes(method),'NOT_FOUND',404);
-  return db.transaction(async tx=>{
-   await tx.select({id:users.id}).from(users).where(eq(users.id,user.id)).for('update');
-   const target=and(scope,eq(personalEntries.id,path[1]||''));
-   const [old]=path.length===2?await tx.select().from(personalEntries).where(target).for('update'):[];
-   if(method!=='POST'){check(old,'NOT_FOUND',404);check(body.version===(old.data as any).version,'TEMPLATE_CHANGED',409)}
-   if(method==='DELETE'){await tx.delete(personalEntries).where(target);return ok({deleted:true})}
-   check(method==='POST'?path.length===1:path.length===2,'NOT_FOUND',404);
-   let data:any;
-   if(method==='PATCH'&&!body.file){check(typeof body.name==='string'&&body.name.trim()&&body.name.length<=120);data={...old!.data as any,name:body.name.trim()}}
-   else{try{data=savedTemplate(body)}catch(e){throw new ApiError(e instanceof Error?e.message:'TEMPLATE_INVALID')}
-    const bytes=Buffer.from(data.file,'base64');check(bytes.length>0&&bytes.length<=TEMPLATE_LIMIT&&bytes.toString('base64')===data.file,'TEMPLATE_INVALID');check(data.filename.toLowerCase().endsWith('.pdf')?bytes.subarray(0,5).toString()==='%PDF-':bytes[0]===80&&bytes[1]===75,'TEMPLATE_INVALID');
-   }
-   if(method==='POST'){const rows=await tx.select({id:personalEntries.id}).from(personalEntries).where(scope);check(rows.length<20,'TEMPLATE_QUOTA',409)}
-   data={...data,version:old?(old.data as any).version+1:1,updatedAt:now()};const id=old?.id||uid();
-   if(old)await tx.update(personalEntries).set({data}).where(target);else await tx.insert(personalEntries).values({id,userId:user.id,kind:'template',data});return ok(meta({id,data}));
-  });
- }
  if(path[0]==='access'&&path.length===1){
   if(method==='GET'){
    const rows=await permissionRows();
@@ -596,6 +572,13 @@ async function handle(req:Request){
    return ok({batchId,allocations},201);
   });
  }
+ if(path[0]==='payroll-branding'&&path.length===1){
+  check(ownerAdmin||departmentManager,'FORBIDDEN',403);const id=method==='GET'?url.searchParams.get('departmentId'):body.departmentId;
+  check(typeof id==='string'&&id&&canManageDepartment(ownerAdmin,departmentManager,departmentContext,id),'FORBIDDEN',403);
+  const [department]=await db.select().from(departments).where(eq(departments.id,id));check(department,'NOT_FOUND',404);const key='pb-'+id.replaceAll('-','');
+  if(method==='GET'){const [row]=await db.select().from(printSettings).where(eq(printSettings.id,key));return ok(row?.data||{departmentTitle:department.name,preparedBy:'',logo:''})}
+  check(method==='PATCH','NOT_FOUND',404);let data;try{data={...payrollBranding(body),departmentId:id};if(data.logo){const {PDFDocument}=await import('pdf-lib');await (await PDFDocument.create()).embedPng(Buffer.from(data.logo.split(',')[1],'base64'))}}catch{throw new ApiError('BRANDING_INVALID')};await db.insert(printSettings).values({id:key,data}).onDuplicateKeyUpdate({set:{data}});return ok(data);
+ }
  if(path[0]==='department-payroll'&&method==='GET'){
   check(ownerAdmin||departmentManager,'FORBIDDEN',403);
   const year=url.searchParams.get('year'),period=year||url.searchParams.get('period')||localDay().slice(0,7);check(year?validReportYear(year):payPeriodPattern.test(period));
@@ -629,15 +612,17 @@ async function handle(req:Request){
   const totals:Record<string,{name:string;total:number;hours:number;balance:number;advance:number;paid:number}>={};
   for(const row of visible){const group=totals[row.departmentId]??={name:row.departmentName,total:0,hours:0,balance:0,advance:0,paid:0};group.advance+=row.advance;group.paid+=row.paid;group.total+=Number(row.total)||0;group.hours+=Number(row.hours)||0;group.balance+=Number(row.balance)||0}
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll'));
-  const printTemplate={...printDefaults,...template?.data as object};
+  const brandRows=await db.select().from(printSettings).where(like(printSettings.id,'pb-%'));
+  const byDepartment=Object.fromEntries(brandRows.filter(row=>ownerAdmin||row.id==='pb-'+departmentId.replaceAll('-','')).map(row=>[(row.data as any).departmentId,row.data]));
+  const printTemplate={...printDefaults,...template?.data as object,...byDepartment[departmentId] as object,byDepartment};
   if(path[1]==='export'){
    const format=url.searchParams.get('format'),kind=url.searchParams.get('kind');check((format==='xlsx'||format==='pdf')&&(kind==='ledger'||kind==='slips'));
    const exportRows=kind==='slips'&&!year&&url.searchParams.get('view')!=='consolidated'?visible.map(row=>consolidated.find(statement=>payrollIdentityKey(statement)===payrollIdentityKey(row))||row):visible;
-   const bytes=format==='xlsx'?await payrollXlsx(exportRows,kind,period,printTemplate.company):await payrollPdf(exportRows,kind,period,printTemplate);
+   const bytes=format==='xlsx'?await payrollXlsx(exportRows,kind,period,printTemplate.company,printTemplate):await payrollPdf(exportRows,kind,period,printTemplate);
    const filename=(kind==='ledger'?'Bang_luong_':'Phieu_luong_')+period+'.'+format;
    return new Response(Buffer.from(bytes),{headers:{'Content-Type':format==='xlsx'?'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'application/pdf','Content-Disposition':`attachment; filename="${filename}"`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
   }
-  return ok({rows:visible,consolidated,asOf,totals:Object.values(totals),template:printTemplate});
+  return ok({rows:visible,consolidated,asOf,totals:Object.values(totals),template:printTemplate,brandingDepartmentId:departmentId});
  }
  if(path[0]==='admin'){
   check(admin,'FORBIDDEN',403);
@@ -738,7 +723,9 @@ async function handle(req:Request){
   const slips=monthly.filter(row=>row.period===period).map(row=>combined.find(statement=>statement.departmentId===row.departmentId)||row);
   for(const statement of combined)if(!slips.some(row=>row.departmentId===statement.departmentId))slips.push(statement);
   const [template]=await db.select().from(printSettings).where(eq(printSettings.id,'payroll')).limit(1);
-  return ok({slips,template:{...printDefaults,...template?.data as object}});
+  const brandingIds=[...new Set(ownRows.map(row=>'pb-'+String(row.departmentId).replaceAll('-','')))];
+  const brandRows=brandingIds.length?await db.select().from(printSettings).where(inArray(printSettings.id,brandingIds)):[];
+  return ok({slips,template:{...printDefaults,...template?.data as object,byDepartment:Object.fromEntries(brandRows.map(row=>[(row.data as any).departmentId,row.data]))}});
  }
  if(path[0]==='attendance-import'){
   check(ownerAdmin,'FORBIDDEN',403);check(method==='POST'&&path.length===1,'NOT_FOUND',404);
