@@ -1,6 +1,6 @@
 import {payrollBranding} from '../../../lib/payroll-branding';
 import {isLayout} from '../../../lib/appearance';
-import {VERIFICATION_TTL,verificationToken,tokenDigest,validVerificationToken,verificationThrottle,verificationMailConfigured,sendVerificationEmail} from '../../../lib/email-verification';
+import {tokenDigest,validVerificationToken} from '../../../lib/email-verification';
 import {shiftRateInput} from '../../../lib/attendance-rates';
 import {attendanceKind,regularAttendanceExists} from '../../../lib/attendance-kind';
 import {scheduleWeek,addScheduleDays,plannedShift,scheduleOverlaps,scheduleCapacityAllows,validScheduleCapacity} from '../../../lib/work-schedule';
@@ -71,7 +71,7 @@ async function handle(req:Request){
  async function session(u:any,executor:any=db){const id=hex(crypto.getRandomValues(new Uint8Array(32)));await executor.insert(sessions).values({id,userId:u.id,expires:Date.now()+604800000});return ok(await userSummary(u),200,{'Set-Cookie':`bm_session=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${url.protocol==='https:'?'; Secure':''}`})}
  if(path[0]==='health'){await db.execute(sql`SELECT 1`);return ok({status:'ok',database:'mysql'})}
  if(path[0]==='auth'){
-  if(path[1]==='registration-status'&&method==='GET')return ok({emailVerificationRequired:true,emailDeliveryConfigured:verificationMailConfigured()});
+  if(path[1]==='registration-status'&&method==='GET')return ok({emailVerificationRequired:false});
   if(path[1]==='verify-email'&&method==='POST'){
    check(validVerificationToken(body.token),'VERIFICATION_INVALID');
    return db.transaction(async tx=>{
@@ -114,9 +114,8 @@ async function handle(req:Request){
    const u=await db.select().from(users).where(eq(users.email,email)).limit(1).then(rows=>rows[0]);
    if(path[1]==='register'){
     check(password.length>=8);check(!u,'EMAIL_EXISTS',409);const name=str(body.name,80);
-    check(verificationMailConfigured(),'VERIFICATION_MAIL_UNAVAILABLE',503);
-    const pending=verificationToken(),time=Date.now(),encoded=await hash(password);
-    await db.transaction(async tx=>{
+    const time=Date.now(),encoded=await hash(password);
+    return db.transaction(async tx=>{
      const ip=req.headers.get('x-forwarded-for')?.split(',').at(-1)?.trim()||req.headers.get('x-real-ip')||'unknown';
      for(const limit of [{id:'global',max:200},{id:createHash('sha256').update('ip:'+ip).digest('hex'),max:30}]){
       await tx.insert(emailVerificationLimits).values({id:limit.id,windowStart:time,requests:0}).onDuplicateKeyUpdate({set:{id:limit.id}});
@@ -125,13 +124,11 @@ async function handle(req:Request){
       check(count<=limit.max,'VERIFICATION_LIMIT',429);
       await tx.update(emailVerificationLimits).set({requests:count,windowStart:fresh?time:counter.windowStart}).where(eq(emailVerificationLimits.id,limit.id));
      }
-     await tx.insert(emailVerifications).values({email,name,password:encoded,tokenHash:pending.digest,expires:0,sentAt:0,windowStart:time,sends:0}).onDuplicateKeyUpdate({set:{email}});
-     const [previous]=await tx.select().from(emailVerifications).where(eq(emailVerifications.email,email)).for('update');
-     const blocked=verificationThrottle(previous,time);check(!blocked,blocked||'VERIFICATION_LIMIT',429);
-     await tx.update(emailVerifications).set({name,password:encoded,tokenHash:pending.digest,expires:time+VERIFICATION_TTL,sentAt:time,windowStart:time-previous.windowStart>=3600000?time:previous.windowStart,sends:time-previous.windowStart>=3600000?1:previous.sends+1}).where(eq(emailVerifications.email,email));
+     const account={id:uid(),name,email,password:encoded,demo:0};
+     await tx.insert(users).values(account);
+     await tx.delete(emailVerifications).where(eq(emailVerifications.email,email));
+     return session(account,tx);
     });
-    try{await sendVerificationEmail(email,pending.token,pending.digest)}catch{throw new ApiError('VERIFICATION_SEND_FAILED',503)}
-    return ok({verificationRequired:true,message:'Đã gửi liên kết xác thực. Kiểm tra hộp thư và thư rác; liên kết có hiệu lực 10 phút.'});
    }
    return db.transaction(async tx=>{const [fresh]=await tx.select().from(users).where(eq(users.email,email)).for('update');check(fresh&&!fresh.demo&&fresh.password===await hash(password,fresh.password.split(':')[0]),'INVALID_LOGIN',401);check(!await suspended(fresh.id)&&!await removed(fresh.id),'ACCOUNT_SUSPENDED',403);return session(fresh,tx)});
   }
